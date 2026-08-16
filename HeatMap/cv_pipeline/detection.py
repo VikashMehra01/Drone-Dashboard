@@ -40,13 +40,13 @@ class PersonDetector:
         if detector_key == "sdnet":
             # SDNet expects a .pth weights file.
             if model_path is None:
-                mdc_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'MovingDroneCrowd')
+                mdc_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'crowd_models')
                 for f in os.listdir(mdc_root):
                     if f.endswith('.pth'):
                         model_path = os.path.join(mdc_root, f)
                         break
                 if model_path is None:
-                    raise FileNotFoundError("Could not find SDNet .pth weights in MovingDroneCrowd folder.")
+                    raise FileNotFoundError("Could not find SDNet .pth weights in crowd_models/ folder.")
             self.detector = detector_cls(weights_path=model_path, device=device)
         elif detector_key == "yolo":
             self.detector = detector_cls(weights_path=model_path or "yolov8n.pt", device=device, confidence=confidence)

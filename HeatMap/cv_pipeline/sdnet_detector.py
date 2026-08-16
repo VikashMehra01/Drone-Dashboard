@@ -1,5 +1,5 @@
 """
-SDNet Detector: Wraps the MovingDroneCrowd Video_Counter (SDNet) model
+SDNet Detector: Wraps the crowd_models/ (MovingDroneCrowd) Video_Counter (SDNet) model
 for density-map-based crowd counting from drone video frames.
 """
 import sys
@@ -12,15 +12,15 @@ import cv2
 from PIL import Image
 import torchvision.transforms as standard_transforms
 
-# Add MovingDroneCrowd to sys.path so we can import its modules
-MDC_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'MovingDroneCrowd')
+# Add crowd_models/ to sys.path so we can import its modules
+MDC_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'crowd_models')
 sys.path.insert(0, os.path.abspath(MDC_ROOT))
 
 from config import cfg
 from model.VIC import Video_Counter
 from easydict import EasyDict as edict
 
-# ---------- Configuration matching MovingDroneCrowd settings ----------
+# ---------- Configuration matching crowd_models/ (MovingDroneCrowd) settings ----------
 MEAN_STD = ([117/255., 110/255., 105/255.], [67.10/255., 65.45/255., 66.23/255.])
 DEN_FACTOR = 200.0
 
@@ -66,7 +66,7 @@ class SDNetDetector:
         self.model.eval()
         print("[SDNet] Model loaded successfully.")
 
-        # Image preprocessing (same as MovingDroneCrowd test pipeline)
+        # Image preprocessing (same as crowd_models/ test pipeline)
         self.img_transform = standard_transforms.Compose([
             standard_transforms.ToTensor(),
             standard_transforms.Normalize(*MEAN_STD)

@@ -1,1 +1,0 @@
-{"drone_id": "DRN-001", "drone_name": "Alpha-1", "source": "..\\media\\videos\\droneVid.mp4", "latitude": 28.6139, "longitude": 77.209, "altitude": 100.0, "zone": "Live Stream Zone", "fps": 5, "loop": true, "model": "sdnet", "device": "cuda"}

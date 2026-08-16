@@ -16,6 +16,12 @@ dist/
 dist-ssr/
 .npm/
 
+# cv_pipeline runtime artifacts (per-drone logs/PID files created when a
+# stream_processor.py subprocess is launched — regenerated on every run)
+cv_pipeline/drone_*.log
+cv_pipeline/drone_*.pid
+cv_pipeline/drone_*.json
+
 # OS generated files
 .DS_Store
 .DS_Store?

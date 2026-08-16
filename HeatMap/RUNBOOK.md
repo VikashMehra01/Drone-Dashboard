@@ -39,7 +39,7 @@ python -m venv venv
 Open another terminal in `SkyWatch/`:
 
 ```powershell
-cd drone_heatmap_backend
+cd cv_pipeline
 python -m venv venv
 .\venv\Scripts\pip install -r requirements.txt
 ```
@@ -152,7 +152,7 @@ Leave this terminal open.
 ### Terminal 5 — Stream Processor (CV / SDNet)
 
 ```powershell
-cd "C:\Users\RAGHAV JHA\Desktop\The IIT Ropars work\6th sem\DEP\dep\SkyWatch\drone_heatmap_backend"
+cd "C:\Users\RAGHAV JHA\Desktop\The IIT Ropars work\6th sem\DEP\dep\SkyWatch\cv_pipeline"
 .\venv\Scripts\python stream_processor.py `
     --source rtsp://localhost:8554/mystream `
     --fps 5 `
@@ -241,4 +241,4 @@ Stop in reverse order (Ctrl+C in each terminal):
 | `[DB] PostgreSQL unavailable` | Expected — SQLite fallback is used. Data resets on backend restart. |
 | Backend port 8000 already in use | `netstat -ano \| findstr :8000` then `taskkill /PID <pid> /F` |
 | Frontend port 5173 already in use | `netstat -ano \| findstr :5173` then `taskkill /PID <pid> /F` |
-| SDNet model not found | Ensure `.pth` file is inside `SkyWatch/MovingDroneCrowd/` |
+| SDNet model not found | Ensure `.pth` file is inside `SkyWatch/crowd_models/` |

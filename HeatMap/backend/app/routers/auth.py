@@ -219,7 +219,7 @@ def _resolve_paths():
     from pathlib import Path
     backend_dir = Path(__file__).resolve().parents[2]
     project_root = backend_dir.parent
-    drone_dir = project_root / "drone_heatmap_backend"
+    drone_dir = project_root / "cv_pipeline"
     venv_py_win = backend_dir / "venv" / "Scripts" / "python.exe"
     venv_py_unix = backend_dir / "venv" / "bin" / "python"
     python_exe = str(venv_py_win) if venv_py_win.exists() else (

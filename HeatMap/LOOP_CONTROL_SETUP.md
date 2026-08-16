@@ -6,7 +6,7 @@ The SkyWatch system now supports dynamic video looping control. Videos can be co
 ## Configuration
 
 ### 1. **stream_config.py** (Macros File)
-Located at: `drone_heatmap_backend/stream_config.py`
+Located at: `cv_pipeline/stream_config.py`
 
 Contains all centralized flags and defaults:
 ```python
@@ -17,7 +17,7 @@ DEFAULT_DRONE_ID = "DRN-001"       # Default drone identifier
 ```
 
 ### 2. **Stream Processor**
-Located at: `drone_heatmap_backend/stream_processor.py`
+Located at: `cv_pipeline/stream_processor.py`
 
 Accepts `--loop` flag:
 ```bash
@@ -57,7 +57,7 @@ Stream Processor --[loop_video in payload]--> Backend --[loop_video in API respo
 
 ### Start with loop disabled (one-pass playback)
 ```bash
-cd /home/vikash-mehra/Tree/Drone/SkyWatch/drone_heatmap_backend
+cd /home/vikash-mehra/Tree/Drone/SkyWatch/cv_pipeline
 source ../backend/venv/bin/activate
 python stream_processor.py \
   --source "http://localhost:8000/videos/droneVid.mp4" \
@@ -90,8 +90,8 @@ python stream_processor.py \
 1. **backend/app/config.py** - Added STREAM_STALE_SECONDS, ALLOW_DEBUG_PLAYBACK, MEDIA_VIDEOS_DIR
 2. **backend/app/routers/density.py** - Extended DensityUpdate model with loop_video field
 3. **backend/app/routers/drone.py** - One-active source matching logic
-4. **drone_heatmap_backend/stream_config.py** - NEW: Centralized macros file
-5. **drone_heatmap_backend/stream_processor.py** - Added --loop parameter and loop_video payload
+4. **cv_pipeline/stream_config.py** - NEW: Centralized macros file
+5. **cv_pipeline/stream_processor.py** - Added --loop parameter and loop_video payload
 6. **frontend/src/pages/DroneFeed.jsx** - Added loopVideo state, reads from backend
 7. **frontend/src/components/MapView.jsx** - Added loopVideo state, reads from backend, applies to modal video
 
@@ -112,7 +112,7 @@ python stream_processor.py \
 
 3. **Terminal 3**: Start stream processor with desired loop setting
    ```bash
-   cd /home/vikash-mehra/Tree/Drone/SkyWatch/drone_heatmap_backend
+   cd /home/vikash-mehra/Tree/Drone/SkyWatch/cv_pipeline
    source ../backend/venv/bin/activate
    python stream_processor.py --source "http://localhost:8000/videos/droneVid.mp4" --loop false
    ```

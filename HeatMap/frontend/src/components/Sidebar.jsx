@@ -88,7 +88,7 @@ function AddDroneModal({ open, onClose, authFetch }) {
 
                         {field('Stream Source *', 'source', {
                             placeholder: '../media/videos/droneVid.mp4  or  rtsp://192.168.1.10:554/live',
-                            helperText: 'Relative to drone_heatmap_backend/ — file path, RTSP, RTMP, or HTTP URL'
+                            helperText: 'Relative to cv_pipeline/ — file path, RTSP, RTMP, or HTTP URL'
                         })}
 
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
