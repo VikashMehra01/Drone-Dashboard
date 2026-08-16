@@ -1,0 +1,369 @@
+% ---------------------------------------------------------------------------
+% Table 1 — Dataset Summary
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+\centering
+\caption{Dataset characteristics.  data1 and data3 carry DJI EXIF metadata;
+         data2 uses an externally provided trajectory from the
+         Map2DFusion PhantomVillage sequence.}
+\label{tab:datasets}
+\begin{tabular}{lccc}
+\toprule
+Property               & data1        & data2        & data3        \\
+\midrule
+Scene                  & River / suburban & Village      & University campus \\
+Frames                 & 241          & 406          & 140          \\
+Image resolution (px)  & $4000\!\times\!3000$ & $1920\!\times\!1080$ & $4000\!\times\!3000$ \\
+Pose source            & DJI EXIF     & External traj.  & DJI EXIF     \\
+Mean altitude (m)      & 142.2        & 160.9        & 120.2        \\
+Capture interval (s)   & 2.0          & 1.6          & 2.3          \\
+Coverage (m$^{2}$)     & 727\,335     & 723\,534     & 523\,278     \\
+Total input (MB)       & 1\,397       & 252          & 743          \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% Table 2 — Runtime Performance (clean trajectory)
+% ---------------------------------------------------------------------------
+\begin{table*}[t]
+\centering
+\caption{Per-frame runtime on clean trajectories.
+         All experiments were executed on an AMD Ryzen~7 7840HS
+         (8~cores, 16~threads, 16\,GB RAM) at 0.5\,m/px map resolution.
+         Miss rate is the fraction of frames whose total processing
+         time exceeds the inter-frame capture interval.}
+\label{tab:runtime_clean}
+\begin{tabular}{ll rrrrr r}
+\toprule
+Dataset & Variant
+        & \parbox{1.2cm}{\centering Avg\\total (ms)}
+        & \parbox{1.2cm}{\centering P95\\total (ms)}
+        & \parbox{1.2cm}{\centering Avg\\map (ms)}
+        & \parbox{1.2cm}{\centering Avg\\opt (ms)}
+        & \parbox{1.0cm}{\centering FPS}
+        & \parbox{1.2cm}{\centering Miss\\rate (\%)} \\
+\midrule
+\multirow{4}{*}{data1}
+  & Raw GPS              & \textbf{96}  & \textbf{108}  & 16  & ---    & \textbf{10.4}  & 0 \\
+  & Opt.\ SIFT           & 569          & 683           & 24  & 407    & 1.8            & 0 \\
+  & Opt.\ ORB            & 188          & 215           & 21  & 44     & 5.3            & 0 \\
+  & ORB speed-up         & \multicolumn{6}{c}{\emph{$9.3\times$ faster optimization than SIFT}} \\
+\midrule
+\multirow{4}{*}{data2}
+  & Raw GPS              & \textbf{53}  & \textbf{60}   & 26  & ---    & \textbf{18.8}  & 0 \\
+  & Opt.\ SIFT           & 441          & 562           & 33  & 378    & 2.3            & 1.0 \\
+  & Opt.\ ORB            & 137          & 216           & 31  & 80     & 7.3            & 0 \\
+  & ORB speed-up         & \multicolumn{6}{c}{\emph{$4.7\times$ faster optimization than SIFT}} \\
+\midrule
+\multirow{4}{*}{data3}
+  & Raw GPS              & \textbf{147} & \textbf{214}  & 40  & ---    & \textbf{6.8}   & 0 \\
+  & Opt.\ SIFT           & 555          & 791           & 51  & 394    & 1.8            & 0 \\
+  & Opt.\ ORB            & 232          & 435           & 49  & 76     & 4.3            & 0 \\
+  & ORB speed-up         & \multicolumn{6}{c}{\emph{$5.2\times$ faster optimization than SIFT}} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+% ---------------------------------------------------------------------------
+% Table 3 — View-Aware Blending Ablation (clean trajectory)
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+\centering
+\caption{Effect of view-aware overlap arbitration.  ``Basic'' uses
+         simple score-based replacement; ``View-aware'' adds
+         heading-conflict detection and nadir preference.
+         Conflict columns report cumulative pixel-level statistics
+         over the full sequence.}
+\label{tab:blending_ablation}
+\begin{tabular}{ll rr rr}
+\toprule
+Dataset & Compositor
+        & \parbox{0.9cm}{\centering Seam\\SSIM}
+        & \parbox{1.0cm}{\centering Map\\(ms)}
+        & \parbox{1.2cm}{\centering Conflict\\pixels}
+        & \parbox{1.2cm}{\centering Conflict\\overrides} \\
+\midrule
+\multirow{2}{*}{data1}
+  & Basic       & 0.9575 & 25.1 & 0         & 0         \\
+  & View-aware  & 0.9575 & 16.1 & 0         & 0         \\
+\midrule
+\multirow{2}{*}{data2}
+  & Basic       & 0.9094 & 25.9 & 0         & 0         \\
+  & View-aware  & 0.9094 & 26.5 & 2\,837\,423 & 278\,658  \\
+\midrule
+\multirow{2}{*}{data3}
+  & Basic       & 0.9356 & 40.4 & 0         & 0         \\
+  & View-aware  & 0.9361 & 38.2 & 0         & 0         \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% Table 4 — Mosaic Quality (clean trajectory)
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+\centering
+\caption{Mosaic quality metrics on clean trajectories.
+         Seam SSIM measures luminance continuity across tile boundaries
+         (higher is better).  IoU is the mean consecutive-footprint
+         intersection over union.}
+\label{tab:quality_clean}
+\begin{tabular}{ll rrrr}
+\toprule
+Dataset & Variant
+        & \parbox{1.0cm}{\centering Seam\\SSIM}
+        & \parbox{0.8cm}{\centering Avg\\IoU}
+        & \parbox{1.2cm}{\centering Coverage\\(m$^{2}$)}
+        & \parbox{1.0cm}{\centering Mem.\\(MB)} \\
+\midrule
+\multirow{3}{*}{data1}
+  & Raw GPS     & 0.958   & 0.688  & 727\,335  & 189 \\
+  & Opt.\ SIFT  & 0.957   & 0.688  & 727\,396  & 189 \\
+  & Opt.\ ORB   & 0.957   & 0.688  & 727\,392  & 189 \\
+\midrule
+\multirow{3}{*}{data2}
+  & Raw GPS     & 0.909   & 0.768  & 723\,534  & 150 \\
+  & Opt.\ SIFT  & 0.913   & 0.768  & 723\,258  & 150 \\
+  & Opt.\ ORB   & \textbf{0.914} & 0.768  & 723\,354  & 150 \\
+\midrule
+\multirow{3}{*}{data3}
+  & Raw GPS     & 0.936   & 0.720  & 523\,278  & 150 \\
+  & Opt.\ SIFT  & 0.937   & 0.720  & 523\,277  & 150 \\
+  & Opt.\ ORB   & 0.937   & 0.720  & 523\,284  & 150 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% Table 5 — Pose-Graph Statistics (clean trajectory)
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+\centering
+\caption{Pose-graph statistics on clean trajectories.
+         ``Edges'' is the number of accepted pairwise constraints.
+         Residuals are the mean edge disagreement before and after
+         solving the translation graph (in metres).  ``Corr'' is the
+         mean applied correction magnitude.}
+\label{tab:posegraph_clean}
+\begin{tabular}{ll rrrrr}
+\toprule
+Dataset & Detector
+        & Edges
+        & \parbox{1.0cm}{\centering Res.\\before}
+        & \parbox{1.0cm}{\centering Res.\\after}
+        & \parbox{0.8cm}{\centering $\Delta$\\\%}
+        & \parbox{0.9cm}{\centering Avg\\corr (m)} \\
+\midrule
+\multirow{2}{*}{data1}
+  & SIFT  & 1\,433 & 4.60 & 4.26 & $-$7.3  & 0.088 \\
+  & ORB   & 1\,333 & 4.42 & 4.05 & $-$8.3  & 0.079 \\
+\midrule
+\multirow{2}{*}{data2}
+  & SIFT  & 3\,130 & 6.73 & 6.47 & $-$3.9  & 0.208 \\
+  & ORB   & 2\,632 & 5.57 & 5.34 & $-$4.1  & 0.148 \\
+\midrule
+\multirow{2}{*}{data3}
+  & SIFT  & 566   & 5.82 & 5.49 & $-$5.7  & 0.111 \\
+  & ORB   & 490   & 5.40 & 5.06 & $-$6.4  & 0.090 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% Table 6 — Synthetic Bias Stress Test (data1, 3 m linear bias)
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+\centering
+\caption{Synthetic GPS bias experiment on data1 with a linearly
+         increasing 3\,m bias.  ``Raw err'' is the mean XY error of the
+         input poses relative to the clean trajectory; ``Eval err'' is
+         the error after applying the translation correction.}
+\label{tab:bias_test}
+\begin{tabular}{l rrrrrr}
+\toprule
+Variant
+  & \parbox{0.9cm}{\centering Raw\\err (m)}
+  & \parbox{0.9cm}{\centering Eval\\err (m)}
+  & \parbox{0.8cm}{\centering Corr\\(m)}
+  & \parbox{1.0cm}{\centering Res.\\before}
+  & \parbox{1.0cm}{\centering Res.\\after}
+  & \parbox{0.9cm}{\centering Seam\\SSIM} \\
+\midrule
+Raw GPS      & 1.589 & 1.589 & ---   & ---  & ---  & 0.957 \\
+Opt.\ SIFT   & 1.589 & 1.649 & 0.082 & 4.42 & 4.07 & 0.957 \\
+Opt.\ ORB    & 1.589 & 1.644 & 0.073 & 4.26 & 3.87 & 0.957 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% Table 7 — Multi-Drift Robustness (data1, ORB optimizer)
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+\centering
+\caption{Robustness under varying synthetic drift profiles on data1
+         using the ORB optimizer.  ``Gauss'' denotes per-frame i.i.d.\
+         Gaussian noise; ``RW'' denotes a bounded random walk;
+         ``Bias'' is the linearly increasing bias from
+         Table~\ref{tab:bias_test}.}
+\label{tab:drift_robustness}
+\begin{tabular}{l r rr rr r}
+\toprule
+Drift profile
+  & \parbox{0.8cm}{\centering Mag.\\(m)}
+  & \parbox{0.8cm}{\centering Raw\\err}
+  & \parbox{0.8cm}{\centering Eval\\err}
+  & \parbox{0.8cm}{\centering Res.\\bef.}
+  & \parbox{0.8cm}{\centering Res.\\aft.}
+  & \parbox{0.9cm}{\centering Seam\\SSIM} \\
+\midrule
+Clean        & 0 & 0.000 & 0.079 & 4.42 & 4.05 & 0.957 \\
+Gauss 1\,m   & 1 & 1.167 & 1.139 & 4.68 & 4.20 & 0.957 \\
+Gauss 2\,m   & 2 & 2.334 & 2.268 & 5.42 & 4.62 & 0.956 \\
+RW 2\,m      & 2 & 1.081 & 1.138 & 4.52 & 4.09 & 0.957 \\
+RW 4\,m      & 4 & 2.162 & 2.211 & 4.62 & 4.14 & 0.955 \\
+Bias 3\,m    & 3 & 1.589 & 1.644 & 4.26 & 3.87 & 0.957 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% Table 8 — GPS Prior Weight Sensitivity (w_gps ablation)
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+\centering
+\caption{Effect of GPS prior weight $w_\text{gps}$ on correction
+         behaviour under 3\,m synthetic bias (data1, ORB detector,
+         $w_\text{match}=0.25$ fixed).  Lower $w_\text{gps}$ permits
+         larger corrections but increases evaluated pose error due to
+         over-correction on the tested trajectory.}
+\label{tab:ablation_wgps}
+\begin{tabular}{r rrrr r}
+\toprule
+$w_\text{gps}$
+  & \parbox{0.9cm}{\centering Avg\\corr (m)}
+  & \parbox{0.9cm}{\centering Eval\\err (m)}
+  & \parbox{0.9cm}{\centering Res.\\before}
+  & \parbox{0.9cm}{\centering Res.\\after}
+  & \parbox{0.9cm}{\centering Seam\\SSIM} \\
+\midrule
+  1  & 0.410 & 1.951 & 4.26 & 3.01 & 0.958 \\
+  3  & 0.187 & 1.744 & 4.26 & 3.47 & 0.957 \\
+  9  & 0.073 & 1.644 & 4.26 & 3.87 & 0.957 \\
+  27 & 0.026 & 1.607 & 4.26 & 4.10 & 0.957 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% Table 9 — Match Weight Sensitivity (w_match ablation)
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+\centering
+\caption{Effect of match weight $w_\text{match}$ on correction
+         behaviour under 3\,m synthetic bias (data1, ORB detector,
+         $w_\text{gps}=9.0$ fixed).}
+\label{tab:ablation_wmatch}
+\begin{tabular}{r rrrr r}
+\toprule
+$w_\text{match}$
+  & \parbox{0.9cm}{\centering Avg\\corr (m)}
+  & \parbox{0.9cm}{\centering Eval\\err (m)}
+  & \parbox{0.9cm}{\centering Res.\\before}
+  & \parbox{0.9cm}{\centering Res.\\after}
+  & \parbox{0.9cm}{\centering Seam\\SSIM} \\
+\midrule
+  0.05 & 0.016 & 1.599 & 4.26 & 4.16 & 0.957 \\
+  0.10 & 0.031 & 1.611 & 4.26 & 4.07 & 0.957 \\
+  0.25 & 0.073 & 1.644 & 4.26 & 3.87 & 0.957 \\
+  0.50 & 0.134 & 1.696 & 4.26 & 3.63 & 0.957 \\
+  1.00 & 0.234 & 1.786 & 4.26 & 3.35 & 0.957 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% Table 10 — Feature Count Sensitivity (ORB vs SIFT at matched budgets)
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+\centering
+\caption{Effect of feature count on optimizer runtime and quality
+         (data1, clean trajectory).  ORB and SIFT are compared at
+         matched feature budgets.  ORB is $7\times$--$9\times$ faster
+         across all budgets with comparable edge counts and SSIM.}
+\label{tab:ablation_nfeatures}
+\begin{tabular}{r rr rr rr}
+\toprule
+ & \multicolumn{2}{c}{Opt.\ time (ms)}
+ & \multicolumn{2}{c}{Edges}
+ & \multicolumn{2}{c}{Seam SSIM} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+Features & ORB & SIFT & ORB & SIFT & ORB & SIFT \\
+\midrule
+  200  & 17  & 152  & 1\,014 & 1\,174 & 0.9565 & 0.9567 \\
+  500  & 23  & 212  & 1\,265 & 1\,381 & 0.9566 & 0.9569 \\
+  700  & 27  & 256  & 1\,333 & 1\,432 & 0.9568 & 0.9567 \\
+  1000 & 35  & 322  & 1\,373 & 1\,478 & 0.9569 & 0.9567 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% Table 11 — Solve Interval Sensitivity
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+\centering
+\caption{Effect of solve interval on runtime and correction
+         (data1, clean trajectory, ORB detector).  Solving every frame
+         yields the largest corrections but at a 5\,ms higher
+         optimization cost compared to solving every 10 frames.}
+\label{tab:ablation_solve}
+\begin{tabular}{r rrrr}
+\toprule
+Solve interval
+  & \parbox{1.0cm}{\centering Avg opt\\(ms)}
+  & \parbox{1.0cm}{\centering Avg total\\(ms)}
+  & Edges
+  & \parbox{0.9cm}{\centering Seam\\SSIM} \\
+\midrule
+  1  & 32 & 134 & 1\,333 & 0.9579 \\
+  3  & 28 & 129 & 1\,333 & 0.9578 \\
+  5  & 27 & 127 & 1\,333 & 0.9568 \\
+  10 & 26 & 125 & 1\,333 & 0.9572 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% Table 12 — Comparison with Existing Pipelines
+% ---------------------------------------------------------------------------
+\begin{table}[t]
+\centering
+\caption{Comparison with existing pipelines on the same datasets.
+         ODM is an offline SfM pipeline; Map2DFusion is an
+         incremental SLAM-based mapper.
+         ``Per-frame'' for ODM denotes total time divided by frame count.
+         Our system reports the Opt.\ ORB variant.}
+\label{tab:pipeline_comparison}
+\begin{tabular}{l l rrr}
+\toprule
+Dataset & Pipeline
+  & \parbox{1.0cm}{\centering Total\\time}
+  & \parbox{1.0cm}{\centering Per-frame\\(ms)}
+  & \parbox{1.0cm}{\centering GSD\\(cm/px)} \\
+\midrule
+\multirow{2}{*}{data1}
+  & ODM (offline)      & 6m 33s   & 1\,631  & 10.3 \\
+  & Ours (real-time)   & 45s      & 188     & 50.0 \\
+\midrule
+\multirow{2}{*}{data2}
+  & Map2DFusion        & 19.5s    & 48      & 31.8 \\
+  & Ours (real-time)   & 56s      & 137     & 50.0 \\
+\midrule
+\multirow{2}{*}{data3}
+  & ODM (offline)      & 46m 14s  & 19\,004 & 4.0  \\
+  & Ours (real-time)   & 32s      & 232     & 50.0 \\
+\bottomrule
+\end{tabular}
+\end{table}

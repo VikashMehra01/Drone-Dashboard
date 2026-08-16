@@ -1,0 +1,4 @@
+# Build and packaging dependencies
+pyinstaller>=6.0
+wheel>=0.40
+setuptools>=65.0

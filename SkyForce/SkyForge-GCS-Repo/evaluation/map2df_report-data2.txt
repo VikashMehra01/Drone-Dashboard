@@ -1,0 +1,19 @@
+lyrnox@LAPTOP-IO2AG1DV:/mnt/c/Users/USER$ docker run --rm -it   -e LIBDC1394_DISABLE=1   -v /home/lyrnox/phantom3-village-kfs/:/data   map2dfusion   DataPath=/data   Win3D.Enable=0 Map.File2Save=/data/output.png ShouldStop=1
+libdc1394 error: Failed to initialize libdc1394
+Parsing file: ./Default.cfg ....
+Act=TestMap2D
+Loaded 20 frames.
+Box:Min:0.543482 173.865 192.018,Max:9.90754 293.153 193.911
+Auto resolution from max height 193.911m.
+Map2D.Resolution=0.317888
+Resolution:[3584 3328],_lengthPixel:0.317888,Area:1.03312e+06
+TrajectoryLength:7669.34
+
+------------------------------------  Timer report ------------------------------------
+           FUNCTION                       #CALLS  MIN.T  MEAN.T  MAX.T  TOTAL
+---------------------------------------------------------------------------------------
+MultiBandMap2DCPU::Apply                   406  268.9us   2.6ms  22.3ms   1.1 s
+MultiBandMap2DCPU::renderFrame             406    9.4ms  26.8ms 106.1ms  10.9 s
+MultiBandMap2DCPU::spreadMap                 9    6.9us  10.8us  15.0us  97.0us
+obtainFrame                                406   15.1ms  18.4ms  28.3ms   7.5 s
+--------------------------------- End of Timer report ---------------------------------

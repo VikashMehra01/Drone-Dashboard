@@ -1,0 +1,39 @@
+{
+  "mavlink": {
+    "default_endpoint": "udp:0.0.0.0:14550",
+    "auto_detect_enabled": true,
+    "endpoints": [
+      "udp:0.0.0.0:14550",
+      "udp:127.0.0.1:14550",
+      "tcp:127.0.0.1:5760",
+      "/dev/ttyUSB0",
+      "COM3"
+    ],
+    "baudrate": 57600
+  },
+  "camera": {
+    "default_source": "none",
+    "sources": {
+      "0": "Laptop/USB Webcam",
+      "1": "Secondary Camera",
+      "rtsp://192.168.144.108:554/stream=1": "DJI Drone RTSP"
+    }
+  },
+  "mapping": {
+    "default_resolution": 0.5,
+    "default_band_num": 2,
+    "default_tile_size": 512,
+    "enable_pose_graph": false,
+    "enable_satellite": false
+  },
+  "export": {
+    "map_format": "png",
+    "include_pdf_report": true,
+    "save_all_frames": true
+  },
+  "ui": {
+    "window_width": 1600,
+    "window_height": 960,
+    "refresh_rate_hz": 10
+  }
+}

@@ -1,0 +1,36 @@
+﻿# Core GUI Framework
+PyQt6>=6.2
+
+# Image Processing & Computer Vision
+opencv-python>=4.5
+numpy>=1.23
+Pillow>=8.3
+scipy>=1.7
+
+# Telemetry & MAVLink
+pymavlink>=2.4
+pymavlink-dialects>=2.4
+
+# Web & Geospatial
+requests>=2.28
+pyproj>=3.3
+
+# Visualization & Reporting
+matplotlib>=3.5
+
+# Optional: for faster image processing
+# scikit-image>=0.18
+# Cython
+
+# Optional: GStreamer RTSP backend
+# Requires the system GStreamer runtime plus Python bindings.
+# Windows recommended installer components:
+#   gstreamer runtime + development packages
+#   plugins-base, plugins-good, plugins-bad, plugins-ugly, libav
+# Python package availability varies on Windows:
+#   PyGObject
+
+# Development (optional)
+# pytest
+# black
+# pylint
