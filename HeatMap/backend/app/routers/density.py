@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 from app.config import settings
-from app.db import get_db_cursor, is_using_memory_db
+from app.db import get_db_cursor
 
 router = APIRouter(prefix="/api/density", tags=["density"])
 
@@ -110,74 +110,41 @@ def _persist_density_point(data: "DensityUpdate", drone_id: str) -> None:
     name = data.drone_name or drone_id
     ts = float(data.timestamp)
 
-    if is_using_memory_db():
-        # SQLite backend — use unix timestamps and INSERT OR REPLACE
-        with get_db_cursor() as (_, cursor):
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO drones (
-                    id, name, latitude, longitude, altitude,
-                    battery_level, is_active, feed_url, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    drone_id, name, latitude, longitude, altitude,
-                    100.0, 1, data.source, ts,
-                ),
+    with get_db_cursor() as (_, cursor):
+        cursor.execute(
+            """
+            INSERT INTO drones (
+                id, name, latitude, longitude, altitude,
+                battery_level, is_active, feed_url, updated_at
             )
-            cursor.execute(
-                """
-                INSERT INTO density_records (
-                    drone_id, latitude, longitude,
-                    person_count, density_level, timestamp
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    drone_id, latitude, longitude,
-                    int(data.points_count), float(data.headcount), ts,
-                ),
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                name = excluded.name,
+                latitude = excluded.latitude,
+                longitude = excluded.longitude,
+                altitude = excluded.altitude,
+                is_active = excluded.is_active,
+                feed_url = excluded.feed_url,
+                updated_at = excluded.updated_at
+            """,
+            (
+                drone_id, name, latitude, longitude, altitude,
+                100.0, 1, data.source, ts,
+            ),
+        )
+        cursor.execute(
+            """
+            INSERT INTO density_records (
+                drone_id, latitude, longitude,
+                person_count, density_level, timestamp
             )
-    else:
-        # PostgreSQL backend
-        capture_time = datetime.utcfromtimestamp(ts)
-        with get_db_cursor() as (_, cursor):
-            cursor.execute(
-                """
-                INSERT INTO drones (
-                    id, name, latitude, longitude, altitude,
-                    battery_level, is_active, feed_url, updated_at
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                ON CONFLICT (id)
-                DO UPDATE SET
-                    name = EXCLUDED.name,
-                    latitude = EXCLUDED.latitude,
-                    longitude = EXCLUDED.longitude,
-                    altitude = EXCLUDED.altitude,
-                    is_active = EXCLUDED.is_active,
-                    feed_url = EXCLUDED.feed_url,
-                    updated_at = NOW()
-                """,
-                (
-                    drone_id, name, latitude, longitude, altitude,
-                    100.0, True, data.source,
-                ),
-            )
-            cursor.execute(
-                """
-                INSERT INTO density_records (
-                    drone_id, latitude, longitude,
-                    person_count, density_level, timestamp
-                )
-                VALUES (%s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    drone_id, latitude, longitude,
-                    int(data.points_count), float(data.headcount), capture_time,
-                ),
-            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                drone_id, latitude, longitude,
+                int(data.points_count), float(data.headcount), ts,
+            ),
+        )
 
 
 def _append_memory_point(drone_id: str, timestamp: float, points_count: int, headcount: float) -> None:
@@ -312,7 +279,7 @@ async def update_current_density(data: DensityUpdate):
             now_ts = time.time()
             last_warned = _db_warning_last_logged.get(resolved_drone_id, 0)
             if now_ts - last_warned > 60:
-                print(f"[DB] Density persistence unavailable for {resolved_drone_id} (running without PostgreSQL). Data is still live in memory.")
+                print(f"[DB] Density persistence unavailable for {resolved_drone_id} ({exc}). Data is still live in memory.")
                 _db_warning_last_logged[resolved_drone_id] = now_ts
     
     return {"status": "success"}
@@ -344,62 +311,38 @@ async def get_density_history(
     safe_interval = max(1, int(interval_seconds))
 
     try:
-        with get_db_cursor(dict_rows=True) as (_, cursor):
-            if is_using_memory_db():
-                # SQLite: timestamp column is a unix float
-                cursor.execute(
-                    """
-                    SELECT
-                        drone_id,
-                        CAST(CAST(timestamp AS INTEGER) / ? AS INTEGER) * ? AS bucket_ts,
-                        AVG(person_count) AS people_count,
-                        AVG(density_level) AS density_level,
-                        MAX(person_count) AS max_people_count,
-                        COUNT(*) AS samples
-                    FROM density_records
-                    WHERE timestamp >= (? - ?)
-                        AND (? IS NULL OR drone_id = ?)
-                    GROUP BY drone_id, bucket_ts
-                    ORDER BY bucket_ts ASC
-                    """,
-                    (
-                        safe_interval, safe_interval,
-                        time.time(), resolved_window_seconds,
-                        drone_id, drone_id,
-                    ),
-                )
-                raw_rows = cursor.fetchall()
-                # Convert epoch bucket_ts to ISO format
-                rows = [
-                    {
-                        **r,
-                        "bucket_ts": datetime.utcfromtimestamp(float(r["bucket_ts"])) if r.get("bucket_ts") else None,
-                    }
-                    for r in raw_rows
-                ]
-            else:
-                cursor.execute(
-                    """
-                    SELECT
-                        drone_id,
-                        TO_TIMESTAMP(FLOOR(EXTRACT(EPOCH FROM timestamp) / %s) * %s) AS bucket_ts,
-                        AVG(person_count)::DOUBLE PRECISION AS people_count,
-                        AVG(density_level)::DOUBLE PRECISION AS density_level,
-                        MAX(person_count) AS max_people_count,
-                        COUNT(*) AS samples
-                    FROM density_records
-                    WHERE timestamp >= NOW() - (%s * INTERVAL '1 second')
-                        AND (%s IS NULL OR drone_id = %s)
-                    GROUP BY drone_id, bucket_ts
-                    ORDER BY bucket_ts ASC
-                    """,
-                    (
-                        safe_interval, safe_interval,
-                        resolved_window_seconds,
-                        drone_id, drone_id,
-                    ),
-                )
-                rows = cursor.fetchall()
+        with get_db_cursor() as (_, cursor):
+            # timestamp column is a unix float
+            cursor.execute(
+                """
+                SELECT
+                    drone_id,
+                    CAST(CAST(timestamp AS INTEGER) / ? AS INTEGER) * ? AS bucket_ts,
+                    AVG(person_count) AS people_count,
+                    AVG(density_level) AS density_level,
+                    MAX(person_count) AS max_people_count,
+                    COUNT(*) AS samples
+                FROM density_records
+                WHERE timestamp >= (? - ?)
+                    AND (? IS NULL OR drone_id = ?)
+                GROUP BY drone_id, bucket_ts
+                ORDER BY bucket_ts ASC
+                """,
+                (
+                    safe_interval, safe_interval,
+                    time.time(), resolved_window_seconds,
+                    drone_id, drone_id,
+                ),
+            )
+            raw_rows = cursor.fetchall()
+            # Convert epoch bucket_ts to ISO format
+            rows = [
+                {
+                    **r,
+                    "bucket_ts": datetime.utcfromtimestamp(float(r["bucket_ts"])) if r.get("bucket_ts") else None,
+                }
+                for r in raw_rows
+            ]
     except Exception as exc:
         fallback = _query_memory_history(drone_id, resolved_window_seconds, safe_interval)
         return {

@@ -1,39 +1,42 @@
 """
-drone_registry.py — In-memory store for launched drone configs + PIDs.
+drone_registry.py — portable process-lifecycle helpers for CV worker subprocesses.
 
-Persists as long as the backend process is running.
-On server restart, the registry is cleared (and stream processors die too).
+The `drone_configs` DB table (see app/db.py, columns `pid` + `status`) is the
+single source of truth for whether a drone's stream_processor.py is running.
+This module only wraps `psutil` so liveness checks and termination behave the
+same on Linux, macOS, and Windows — no more OS-specific pgrep/PowerShell/
+taskkill branching, and no more separate in-memory registry or PID file that
+can drift out of sync with the DB.
 """
 from __future__ import annotations
 
-# {drone_id: {"config": {...launch params}, "pid": int|None, "status": "active"|"stopped"}}
-_registry: dict[str, dict] = {}
+import psutil
 
 
-def register(drone_id: str, config: dict, pid: int) -> None:
-    """Save or overwrite a drone's launch config and PID."""
-    _registry[drone_id] = {"config": config, "pid": pid, "status": "active"}
+def is_alive(pid: int | None) -> bool:
+    """True if `pid` refers to a currently-running process."""
+    if not pid:
+        return False
+    return psutil.pid_exists(pid)
 
 
-def get(drone_id: str) -> dict | None:
-    return _registry.get(drone_id)
+def terminate(pid: int | None, timeout: float = 5.0) -> bool:
+    """
+    Gracefully terminate the process at `pid`, escalating to a hard kill if it
+    doesn't exit within `timeout` seconds. Works identically on every OS.
 
-
-def all_entries() -> dict[str, dict]:
-    return dict(_registry)
-
-
-def set_stopped(drone_id: str) -> None:
-    if drone_id in _registry:
-        _registry[drone_id]["status"] = "stopped"
-        _registry[drone_id]["pid"] = None
-
-
-def set_active(drone_id: str, pid: int) -> None:
-    if drone_id in _registry:
-        _registry[drone_id]["status"] = "active"
-        _registry[drone_id]["pid"] = pid
-
-
-def remove(drone_id: str) -> None:
-    _registry.pop(drone_id, None)
+    Returns True if a live process was found and terminated, False if it was
+    already gone (or `pid` is falsy).
+    """
+    if not pid or not psutil.pid_exists(pid):
+        return False
+    try:
+        proc = psutil.Process(pid)
+        proc.terminate()
+        try:
+            proc.wait(timeout=timeout)
+        except psutil.TimeoutExpired:
+            proc.kill()
+        return True
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return False

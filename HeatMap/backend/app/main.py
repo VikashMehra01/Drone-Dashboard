@@ -2,9 +2,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.config import settings
-from app.db import init_db_pool, close_db_pool, ensure_schema, is_using_memory_db
+from app.db import init_db_pool, close_db_pool, ensure_schema, DB_PATH
 from app.routers import density, drone, alerts
-from app.routers.auth import router as auth_router
+from app.routers.auth import router as auth_router, reconcile_drone_statuses
 import os
 
 app = FastAPI(
@@ -36,6 +36,7 @@ async def on_startup():
     try:
         init_db_pool()
         ensure_schema()
+        reconcile_drone_statuses()
     except Exception as exc:
         # Keep API available even when DB is temporarily unavailable.
         print(f"Warning: could not initialize database pool: {exc}")
@@ -54,5 +55,6 @@ async def root():
 async def health_check():
     return {
         "status": "healthy",
-        "db_backend": "sqlite_memory" if is_using_memory_db() else "postgres",
+        "db_backend": "sqlite",
+        "db_path": DB_PATH,
     }

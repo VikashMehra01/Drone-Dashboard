@@ -1,0 +1,59 @@
+# SkyWatch — consolidated Python dependencies for backend/, cv_pipeline/, and
+# crowd_models/ in one environment. Merged from backend/requirements.txt,
+# cv_pipeline/requirements.txt, and crowd_models/requirements.txt.
+#
+# Requires Python 3.10 — see README.md "Why Python 3.10?" (numpy/torch/opencv
+# wheel availability).
+#
+# A few version pins were reconciled where the three source files disagreed;
+# see inline notes. The three subproject requirements.txt files are left as
+# they were (each still installable on its own in a lighter, isolated venv).
+#
+# SkyWatch uses SQLite only (backend/skywatch.db) — no separate database
+# server, so there's no psycopg2/Postgres client dependency here.
+
+# --- backend/ (FastAPI API) ---
+fastapi==0.109.0
+uvicorn==0.27.0
+python-dotenv==1.0.0
+passlib[bcrypt]==1.7.4
+PyJWT==2.8.0
+python-multipart==0.0.9
+psutil==5.9.8
+
+# --- cv_pipeline/ + crowd_models/ (PyTorch CV inference & training) ---
+torch>=2.0.0
+torchvision>=0.15.0
+torchsummary==1.5.1
+easydict==1.13
+ultralytics
+requests>=2.28.0
+
+# crowd_models pinned timm==0.3.2, but sdnet_detector.py's own runtime logs
+# show "timm.models.layers is deprecated, import via timm.layers" warnings —
+# that deprecation shim only exists in timm>=0.9, so 0.3.2 looks like a stale
+# pin rather than what has actually been running. Pinned to what cv_pipeline's
+# own >=0.9.0 constraint (and the observed runtime behavior) requires.
+timm==0.9.16
+
+# backend/cv_pipeline want numpy 1.26.3 (the version this project's README
+# documents as required for stable prebuilt wheels on Python 3.10); crowd_models
+# pinned 2.3.2. Downgraded so everything installs into one environment.
+numpy==1.26.3
+
+# crowd_models also listed opencv-python-headless at a different version —
+# same cv2 module, installing both is redundant; dropped the duplicate.
+opencv-python==4.9.0.80
+
+Pillow==11.3.0
+pandas==2.3.1
+scipy==1.15.3  # crowd_models pinned 1.16.0, which requires Python >=3.11; this
+                # project requires Python 3.10 (see README), so pinned down to
+                # the newest 3.10-compatible release.
+tqdm==4.65.2
+
+# --- crowd_models/ training & reproduction only (not needed for live inference) ---
+matplotlib==3.10.3
+scikit-learn==1.7.1
+tensorboardX==2.6.2.2
+brambox==5.0.0

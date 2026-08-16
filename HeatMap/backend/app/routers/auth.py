@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
-from app.db import get_db_cursor, is_using_memory_db
+from app.db import get_db_cursor
 from app.utils.security import hash_password, verify_password, create_access_token, decode_access_token
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -79,41 +79,41 @@ class EditDroneRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _get_user(username: str) -> Optional[dict]:
-    with get_db_cursor(dict_rows=True) as (_, cur):
-        cur.execute("SELECT id, username, hashed_password, role FROM users WHERE username = %s", (username,))
+    with get_db_cursor() as (_, cur):
+        cur.execute("SELECT id, username, hashed_password, role FROM users WHERE username = ?", (username,))
         return cur.fetchone()
 
 
 def _list_users() -> list:
-    with get_db_cursor(dict_rows=True) as (_, cur):
+    with get_db_cursor() as (_, cur):
         cur.execute("SELECT id, username, role, created_at FROM users ORDER BY id ASC")
         return cur.fetchall()
 
 
 def _count_admins() -> int:
-    with get_db_cursor(dict_rows=True) as (_, cur):
+    with get_db_cursor() as (_, cur):
         cur.execute("SELECT COUNT(*) AS cnt FROM users WHERE role = 'admin'")
         row = cur.fetchone()
         return int(row["cnt"]) if row else 0
 
 
 def _create_user(username: str, password: str, role: str) -> None:
-    with get_db_cursor(dict_rows=True) as (_, cur):
+    with get_db_cursor() as (_, cur):
         cur.execute(
-            "INSERT INTO users (username, hashed_password, role) VALUES (%s, %s, %s)",
+            "INSERT INTO users (username, hashed_password, role) VALUES (?, ?, ?)",
             (username, hash_password(password), role),
         )
 
 
 def _delete_user(username: str) -> None:
-    with get_db_cursor(dict_rows=True) as (_, cur):
-        cur.execute("DELETE FROM users WHERE username = %s", (username,))
+    with get_db_cursor() as (_, cur):
+        cur.execute("DELETE FROM users WHERE username = ?", (username,))
 
 
 def _update_password(username: str, new_password: str) -> None:
-    with get_db_cursor(dict_rows=True) as (_, cur):
+    with get_db_cursor() as (_, cur):
         cur.execute(
-            "UPDATE users SET hashed_password = %s WHERE username = %s",
+            "UPDATE users SET hashed_password = ? WHERE username = ?",
             (hash_password(new_password), username),
         )
 
@@ -263,27 +263,27 @@ def _spawn(cmd: list, drone_dir, log_path) -> subprocess.Popen:
 
 # ── DB helpers for drone configs ─────────────────────────────────────────────
 
-def _db_save_config(config: dict, status: str = "active") -> None:
-    """Upsert drone config + status into drone_configs table."""
+def _db_save_config(config: dict, pid: int | None, status: str = "active") -> None:
+    """Upsert drone config + pid + status into drone_configs table."""
     try:
-        with get_db_cursor() as (conn, cur):
+        with get_db_cursor() as (_, cur):
             cur.execute("""
                 INSERT INTO drone_configs
                     (drone_id, drone_name, source, latitude, longitude,
-                     altitude, zone, fps, loop, model, device, status, updated_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+                     altitude, zone, fps, loop, model, device, pid, status, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,strftime('%s','now'))
                 ON CONFLICT (drone_id) DO UPDATE SET
-                    drone_name=EXCLUDED.drone_name, source=EXCLUDED.source,
-                    latitude=EXCLUDED.latitude, longitude=EXCLUDED.longitude,
-                    altitude=EXCLUDED.altitude, zone=EXCLUDED.zone,
-                    fps=EXCLUDED.fps, loop=EXCLUDED.loop,
-                    model=EXCLUDED.model, device=EXCLUDED.device,
-                    status=EXCLUDED.status, updated_at=NOW()
+                    drone_name=excluded.drone_name, source=excluded.source,
+                    latitude=excluded.latitude, longitude=excluded.longitude,
+                    altitude=excluded.altitude, zone=excluded.zone,
+                    fps=excluded.fps, loop=excluded.loop,
+                    model=excluded.model, device=excluded.device,
+                    pid=excluded.pid, status=excluded.status, updated_at=strftime('%s','now')
             """, (
                 config["drone_id"], config["drone_name"], config["source"],
                 config["latitude"], config["longitude"], config["altitude"],
                 config["zone"], config["fps"], config.get("loop", False),
-                config.get("model", "sdnet"), config.get("device", "cpu"), status
+                config.get("model", "sdnet"), config.get("device", "cpu"), pid, status,
             ))
     except Exception as e:
         print(f"[DB] drone_configs upsert failed: {e}")
@@ -292,63 +292,65 @@ def _db_save_config(config: dict, status: str = "active") -> None:
 def _db_get_config(drone_id: str) -> dict | None:
     """Fetch a single drone config row as dict, or None."""
     try:
-        with get_db_cursor(dict_rows=True) as (_, cur):
-            cur.execute("SELECT * FROM drone_configs WHERE drone_id = %s", (drone_id,))
-            row = cur.fetchone()
-            if not row:
-                return None
-            return dict(row)
+        with get_db_cursor() as (_, cur):
+            cur.execute("SELECT * FROM drone_configs WHERE drone_id = ?", (drone_id,))
+            return cur.fetchone()
     except Exception as e:
         print(f"[DB] drone_configs fetch failed: {e}")
         return None
 
 
-def _db_set_status(drone_id: str, status: str) -> None:
+def _db_set_active(drone_id: str, pid: int) -> None:
     try:
         with get_db_cursor() as (_, cur):
             cur.execute(
-                "UPDATE drone_configs SET status=%s, updated_at=NOW() WHERE drone_id=%s",
-                (status, drone_id)
+                "UPDATE drone_configs SET status=?, pid=?, updated_at=strftime('%s','now') WHERE drone_id=?",
+                ("active", pid, drone_id)
             )
     except Exception as e:
-        print(f"[DB] drone_configs status update failed: {e}")
+        print(f"[DB] drone_configs set-active failed: {e}")
+
+
+def _db_set_stopped(drone_id: str) -> None:
+    try:
+        with get_db_cursor() as (_, cur):
+            cur.execute(
+                "UPDATE drone_configs SET status=?, pid=NULL, updated_at=strftime('%s','now') WHERE drone_id=?",
+                ("stopped", drone_id)
+            )
+    except Exception as e:
+        print(f"[DB] drone_configs set-stopped failed: {e}")
 
 
 def _db_load_all_configs() -> dict[str, dict]:
     """Return all drone configs as {drone_id: row_dict}."""
     try:
-        with get_db_cursor(dict_rows=True) as (_, cur):
+        with get_db_cursor() as (_, cur):
             cur.execute("SELECT * FROM drone_configs")
-            rows = cur.fetchall()
-            return {r["drone_id"]: dict(r) for r in rows}
+            return {r["drone_id"]: r for r in cur.fetchall()}
     except Exception as e:
         print(f"[DB] drone_configs load all failed: {e}")
         return {}
 
 
-# ── PID file (disk only — PID is ephemeral, doesn't belong in DB) ─────────────
-
-def _pid_path(drone_dir, drone_id: str):
-    from pathlib import Path
-    return Path(drone_dir) / f"drone_{drone_id}.pid"
-
-
-def _write_pid(drone_dir, drone_id: str, pid: int) -> None:
-    _pid_path(drone_dir, drone_id).write_text(str(pid))
-
-
-def _read_pid(drone_dir, drone_id: str) -> int | None:
+def reconcile_drone_statuses() -> None:
+    """
+    Called once at backend startup. `drone_configs.status` can say "active"
+    from before the backend last restarted even though the OS process behind
+    it is long gone (subprocesses aren't tied to the backend's lifetime, but
+    they don't reliably survive forever either). Correct any such stale rows
+    so the dashboard doesn't show phantom "active" drones after a restart.
+    """
     try:
-        return int(_pid_path(drone_dir, drone_id).read_text().strip())
-    except Exception:
-        return None
+        configs = _db_load_all_configs()
+    except Exception as exc:
+        print(f"[auth] reconcile_drone_statuses: could not load configs: {exc}")
+        return
 
-
-def _delete_pid(drone_dir, drone_id: str) -> None:
-    try:
-        _pid_path(drone_dir, drone_id).unlink(missing_ok=True)
-    except Exception:
-        pass
+    for drone_id, config in configs.items():
+        if config.get("status") == "active" and not _reg.is_alive(config.get("pid")):
+            _db_set_stopped(drone_id)
+            print(f"[auth] Reconciled stale 'active' status for drone '{drone_id}' (process not running).")
 
 
 @router.get("/drones")
@@ -356,18 +358,24 @@ async def list_drones_admin(_admin: dict = Depends(require_admin)):
     """(Admin) List all drones — active and stopped (from DB configs)."""
     from app.routers.drone import _build_drones_payload
     drones = _build_drones_payload()
+    configs = _db_load_all_configs()
 
-    # Enrich each drone with registry info (pid, precise status)
+    # Enrich each drone with the DB config, verifying "active" against the
+    # real OS process rather than trusting the stored status blindly.
     for d in drones:
-        entry = _reg.get(d["id"])
-        if entry:
-            d["registry_status"] = entry["status"]
-            d["pid"] = entry["pid"]
-            d["config"] = entry["config"]
+        config = configs.get(d["id"])
+        if config:
+            pid = config.get("pid")
+            alive = _reg.is_alive(pid)
+            if config.get("status") == "active" and not alive:
+                _db_set_stopped(d["id"])  # self-heal a stale row
+            d["registry_status"] = "active" if alive else "stopped"
+            d["pid"] = pid if alive else None
+            d["config"] = config
         else:
             d["registry_status"] = "stopped" if d["status"] == "idle" else d["status"]
             d["pid"] = None
-            d["config"] = _db_get_config(d["id"])
+            d["config"] = None
 
     return drones
 
@@ -376,53 +384,19 @@ async def list_drones_admin(_admin: dict = Depends(require_admin)):
 async def delete_drone(drone_id: str, _admin: dict = Depends(require_admin)):
     """(Admin) Stop (if running) and permanently delete drone config from DB."""
     from app.routers.density import active_streams
-    drone_dir, _, _ = _resolve_paths()
 
-    # Kill process if running (same logic as stop)
-    if sys.platform == "win32":
-        ps_script = (
-            f"Get-WmiObject Win32_Process | "
-            f"Where-Object {{ $_.CommandLine -like '*stream_processor.py*' -and "
-            f"$_.CommandLine -like '*{drone_id}*' }} | "
-            f"Select-Object -ExpandProperty ProcessId"
-        )
-        try:
-            result = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps_script],
-                capture_output=True, text=True, timeout=10
-            )
-            for p in result.stdout.splitlines():
-                if p.strip().isdigit():
-                    subprocess.call(["taskkill", "/F", "/T", "/PID", p.strip()],
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
-    else:
-        try:
-            import signal as _sig
-            result = subprocess.run(["pgrep", "-f", f"stream_processor.py.*{drone_id}"],
-                                    capture_output=True, text=True)
-            for p in result.stdout.splitlines():
-                if p.strip().isdigit():
-                    _os.kill(int(p.strip()), _sig.SIGTERM)
-        except Exception:
-            pass
-
-    # Clean up PID file
-    _delete_pid(drone_dir, drone_id)
+    config = _db_get_config(drone_id)
+    _reg.terminate(config.get("pid") if config else None)
 
     # Remove from active streams
     keys = [k for k, v in active_streams.items() if v.get("drone_id") == drone_id]
     for k in keys:
         del active_streams[k]
 
-    # Remove from in-memory registry
-    _reg.remove(drone_id)
-
     # Delete from DB
     try:
         with get_db_cursor() as (_, cur):
-            cur.execute("DELETE FROM drone_configs WHERE drone_id = %s", (drone_id,))
+            cur.execute("DELETE FROM drone_configs WHERE drone_id = ?", (drone_id,))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"DB delete failed: {e}")
 
@@ -447,11 +421,11 @@ async def update_drone(drone_id: str, body: EditDroneRequest, _admin: dict = Dep
     set_clauses = []
     values = []
     for k, v in updates.items():
-        set_clauses.append(f"{k} = %s")
+        set_clauses.append(f"{k} = ?")
         values.append(v)
-    
+
     values.append(drone_id)
-    query = f"UPDATE drone_configs SET {', '.join(set_clauses)} WHERE drone_id = %s"
+    query = f"UPDATE drone_configs SET {', '.join(set_clauses)} WHERE drone_id = ?"
 
     try:
         with get_db_cursor() as (_, cur):
@@ -459,83 +433,26 @@ async def update_drone(drone_id: str, body: EditDroneRequest, _admin: dict = Dep
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"DB update failed: {e}")
 
-    # Also update in-memory registry if it happens to be loaded
-    entry = _reg.get(drone_id)
-    if entry and entry.get("config"):
-        for k, v in updates.items():
-            entry["config"][k] = v
-
     return {"message": f"Drone '{drone_id}' configuration updated."}
 
 
 @router.post("/drones/stop/{drone_id}", status_code=status.HTTP_200_OK)
 async def stop_drone(drone_id: str, _admin: dict = Depends(require_admin)):
-    """(Admin) Kill the stream processor by searching running processes for drone_id."""
+    """(Admin) Stop the stream processor using its DB-recorded PID."""
     from app.routers.density import active_streams
-    drone_dir, _, _ = _resolve_paths()
 
-    killed_pids = []
+    config = _db_get_config(drone_id)
+    pid = config.get("pid") if config else None
+    killed = _reg.terminate(pid)
 
-    if sys.platform == "win32":
-        # Use PowerShell to find python processes whose cmdline contains both
-        # stream_processor.py AND the drone-id string, then kill them.
-        ps_script = (
-            f"Get-WmiObject Win32_Process | "
-            f"Where-Object {{ $_.CommandLine -like '*stream_processor.py*' -and "
-            f"$_.CommandLine -like '*{drone_id}*' }} | "
-            f"Select-Object -ExpandProperty ProcessId"
-        )
-        try:
-            result = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps_script],
-                capture_output=True, text=True, timeout=10
-            )
-            pids = [int(p.strip()) for p in result.stdout.splitlines() if p.strip().isdigit()]
-            for pid in pids:
-                subprocess.call(
-                    ["taskkill", "/F", "/T", "/PID", str(pid)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
-                killed_pids.append(pid)
-        except Exception as e:
-            pass  # fall through to PID-file fallback
-
-        # Fallback: try stored PID file if powershell found nothing
-        if not killed_pids:
-            pid = _read_pid(drone_dir, drone_id)
-            if pid:
-                subprocess.call(
-                    ["taskkill", "/F", "/T", "/PID", str(pid)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
-                killed_pids.append(pid)
-    else:
-        # Unix: use pgrep to find matching processes
-        try:
-            result = subprocess.run(
-                ["pgrep", "-f", f"stream_processor.py.*{drone_id}"],
-                capture_output=True, text=True
-            )
-            import signal as _signal
-            for pid_str in result.stdout.splitlines():
-                pid = int(pid_str.strip())
-                _os.kill(pid, _signal.SIGTERM)
-                killed_pids.append(pid)
-        except Exception:
-            pass
-
-    # Always clean up PID file and active streams
-    _delete_pid(drone_dir, drone_id)
     keys = [k for k, v in active_streams.items() if v.get("drone_id") == drone_id]
     for k in keys:
         del active_streams[k]
 
-    # Update DB status and in-memory registry
-    _db_set_status(drone_id, "stopped")
-    _reg.set_stopped(drone_id)
+    _db_set_stopped(drone_id)
 
-    if killed_pids:
-        return {"message": f"Drone '{drone_id}' stopped (killed PIDs: {killed_pids}).", "killed_pids": killed_pids}
+    if killed:
+        return {"message": f"Drone '{drone_id}' stopped (killed PID {pid}).", "killed_pids": [pid]}
     else:
         return {"message": f"Drone '{drone_id}': no running process found, stream data cleared.", "killed_pids": []}
 
@@ -545,16 +462,14 @@ async def resume_drone(drone_id: str, _admin: dict = Depends(require_admin)):
     """(Admin) Re-launch a previously stopped drone using its saved config."""
     drone_dir, processor, python_exe = _resolve_paths()
 
-    # Config: prefer in-memory registry, fall back to DB
-    entry = _reg.get(drone_id)
-    config = (entry["config"] if entry else None) or _db_get_config(drone_id)
+    config = _db_get_config(drone_id)
     if not config:
         raise HTTPException(status_code=404,
             detail=f"No saved config for '{drone_id}'. Use Add Drone to launch it first.")
 
-    if entry and entry["status"] == "active":
+    if _reg.is_alive(config.get("pid")):
         raise HTTPException(status_code=409,
-            detail=f"Drone '{drone_id}' is already running (PID {entry['pid']}).")
+            detail=f"Drone '{drone_id}' is already running (PID {config['pid']}).")
 
     if not processor.exists():
         raise HTTPException(status_code=404, detail="stream_processor.py not found.")
@@ -576,11 +491,7 @@ async def resume_drone(drone_id: str, _admin: dict = Depends(require_admin)):
         raise HTTPException(status_code=500,
             detail=f"Stream processor crashed on resume:\n{error_text}")
 
-    _write_pid(drone_dir, drone_id, proc.pid)
-    _db_set_status(drone_id, "active")   # update DB status
-    _reg.set_active(drone_id, proc.pid)
-    if drone_id not in _reg.all_entries():
-        _reg.register(drone_id, config, proc.pid)
+    _db_set_active(drone_id, proc.pid)
     return {
         "message": f"Drone '{drone_id}' resumed (PID {proc.pid}).",
         "drone_id": drone_id,
@@ -622,9 +533,7 @@ async def launch_drone(body: AddDroneRequest, _admin: dict = Depends(require_adm
         raise HTTPException(status_code=500,
             detail=f"Stream processor crashed immediately. Log ({log_path.name}):\n{error_text}")
 
-    _write_pid(drone_dir, body.drone_id, proc.pid)
-    _db_save_config(config, status="active")   # persist config + status to DB
-    _reg.register(body.drone_id, config, proc.pid)
+    _db_save_config(config, pid=proc.pid, status="active")
     return {
         "message": f"Drone '{body.drone_name}' ({body.drone_id}) launched (PID {proc.pid}).",
         "drone_id": body.drone_id,

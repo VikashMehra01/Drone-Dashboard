@@ -15,7 +15,7 @@
 - **Multi-Protocol Video Ingestion**: RTSP, RTMP, HTTP MJPEG, or simulated streams from local `.mp4` files.
 - **AI-Powered Crowd Density**: Deep-learning density-map estimation (**SDNet**, from the vendored [`crowd_models`](crowd_models) research repo) or classic **YOLOv8** person detection, both running via PyTorch.
 - **Dynamic Heatmaps & Telemetry**: Live drone coordinates, altitude, battery, and geospatial crowd heatmaps rendered on a Leaflet map.
-- **Resilient Backend**: FastAPI with automatic fallback to a local SQLite database when PostgreSQL is unavailable.
+- **Zero-Setup Backend**: FastAPI backed by a single local SQLite file — no external database server or Docker container required.
 - **Telegram Alert Integration**: Automatic push notifications when a drone's sustained headcount crosses a configurable threshold.
 - **Admin Console**: Launch/stop/resume CV stream processors and manage users directly from the dashboard.
 - **Sleek React Dashboard**: Vite + React + MUI + Tailwind, with live HLS video playback and dark/light mode.
@@ -24,7 +24,7 @@
 
 ## 🏗 System Architecture
 
-SkyWatch is three cooperating processes plus a database, glued together over HTTP:
+SkyWatch is three cooperating processes plus a local database file, glued together over HTTP:
 
 ```
 Video Source                  cv_pipeline/                        backend/ (FastAPI)
@@ -35,9 +35,7 @@ Video Source                  cv_pipeline/                        backend/ (Fast
                                                                              │
                                                                              │ SQL (raw)
                                                                              ▼
-                                                                  PostgreSQL + PostGIS
-                                                                  (falls back to a local
-                                                                   SQLite file if down)
+                                                                  SQLite (backend/skywatch.db)
                                                                              │
                                                                              │ REST, polled every ~5s
                                                                              ▼
@@ -52,7 +50,7 @@ Video Source                  cv_pipeline/                        backend/ (Fast
 
 2. **`backend/`** — the API + state layer (FastAPI). It:
    - Accepts density updates from every running `stream_processor.py` and keeps an in-memory map of active streams (`active_streams`), keyed by source URL.
-   - Persists a sampled subset of points to `density_records` / `drones` tables (PostgreSQL, or SQLite fallback via `app/db.py`'s dialect-translating shim).
+   - Persists a sampled subset of points to `density_records` / `drones` tables in a local SQLite file (`backend/skywatch.db`), via `app/db.py`.
    - Serves `/api/drones` (merges live streams + saved-but-stopped configs + idle drones), `/api/density/current` and `/api/density/history` (bucketed time-series for the Analytics page), `/api/alerts/broadcast` (Telegram), and `/api/auth/*` (JWT login + admin user/drone management).
    - `/api/auth/drones/launch|stop|resume` lets an admin manage `stream_processor.py` subprocesses from the UI — it shells out to spawn/kill the Python process and tracks PID files + an in-memory registry (`drone_registry.py`) alongside the persisted `drone_configs` table.
    - Serves local demo videos as static files under `/videos` (from `media/videos/`).
@@ -61,9 +59,7 @@ Video Source                  cv_pipeline/                        backend/ (Fast
 
 4. **`crowd_models/`** — a vendored copy of the official implementation of *"Video Individual Counting for Moving Drones"* (ICCV 2025 Highlight), providing the **SDNet** model architecture and pretrained checkpoint that `sdnet_detector.py` loads for inference. See [Libraries & Attribution](#-libraries--tech-stack) below.
 
-5. **`database/`** — PostgreSQL/PostGIS schema (`init.sql`), used when running via Docker Compose.
-
-6. **`video-stream/`** — a Docker service intended to simulate an RTSP feed from a local file; **currently a stub** (see [Files that don't contribute](#-files-that-dont-contribute-dead--unused)). In practice, live-stream simulation is done manually with MediaMTX + FFmpeg per [RUNBOOK.md](RUNBOOK.md).
+5. **`video-stream/`** — an unfinished RTSP-simulator; its script is a stub (see [Repo cleanup](#-repo-cleanup)). In practice, live-stream simulation is done manually with MediaMTX + FFmpeg per [RUNBOOK.md](RUNBOOK.md).
 
 ### End-to-end data flow (one frame)
 
@@ -82,15 +78,13 @@ Video Source                  cv_pipeline/                        backend/ (Fast
 | Layer | Stack |
 |---|---|
 | **Frontend** | React 19, Vite 7, React Router 7, MUI 9 + Emotion, Tailwind CSS 4, `react-leaflet` 5 / `leaflet` + `leaflet.heat` (map & heatmap), `hls.js` (live HLS playback), `recharts` (Analytics charts), `lucide-react` (icons) |
-| **Backend API** | FastAPI 0.109, Uvicorn, Pydantic, SQLAlchemy 2 (models only — see below), `psycopg2-binary` (PostgreSQL), stdlib `sqlite3` (fallback), PyJWT + `bcrypt` (auth), `python-dotenv` |
+| **Backend API** | FastAPI 0.109, Uvicorn, Pydantic, stdlib `sqlite3`, PyJWT + `bcrypt` (auth), `psutil` (portable process control), `python-dotenv` |
 | **CV / stream worker** | OpenCV (`cv2`), PyTorch + TorchVision, Ultralytics (YOLOv8), `requests` (posts to backend) |
-| **Crowd-counting model** | **SDNet** (Shared Density-map-guided Network) — ViT/ResNet/VGG-FPN backbones, cross-attention temporal fusion, Precise RoI Pooling — from the vendored [`crowd_models`](crowd_models) repo. `timm`, `easydict`, SciPy, Pandas, Pillow support it. |
-| **Database** | PostgreSQL + PostGIS (production/Docker), auto-fallback to a local SQLite file (`backend/skywatch.db`) when Postgres is unreachable |
-| **Infra** | Docker Compose (frontend, backend, db, video-stream), MediaMTX + FFmpeg (manual RTSP/HLS relay for local demos) |
+| **Crowd-counting model** | **SDNet** (Shared Density-map-guided Network) — ViT/ResNet/VGG-FPN backbones, cross-attention temporal fusion — from the vendored [`crowd_models`](crowd_models) repo. `timm`, `easydict`, SciPy, Pandas, Pillow support it. |
+| **Database** | SQLite — a single local file (`backend/skywatch.db`), created and migrated automatically on backend startup. No server process, no Docker. |
+| **Infra** | MediaMTX + FFmpeg (manual RTSP/HLS relay for local demos) — everything else runs as a plain local process (`uvicorn`, `npm run dev`, `python stream_processor.py`) |
 
 **Attribution:** `crowd_models/` is the official PyTorch implementation accompanying *"Video Individual Counting for Moving Drones"* (ICCV 2025 Highlight, [arXiv:2503.10701](https://arxiv.org/abs/2503.10701)). It's included wholesale for its SDNet model code and a pretrained `.pth` checkpoint; only `config.py`, `model/`, and `misc/` (the modules imported transitively by `model/VIC.py`) are used at inference time by `cv_pipeline/sdnet_detector.py`. `datasets/`, `train.py`, `test.py`, and the evaluation/metrics utilities in `misc/` are training/reproduction code for the original paper and are not exercised by the live app.
-
-Note: `backend/app/models/density.py` and `drone.py` declare SQLAlchemy `Base`/`Column` models, but the backend actually talks to the database with raw SQL through `app/db.py` (which also transparently rewrites Postgres-flavoured SQL to SQLite when falling back). The SQLAlchemy models are unused scaffolding — see below.
 
 ---
 
@@ -102,7 +96,8 @@ To run SkyWatch locally, you will need:
 - **Python 3.10 (strictly required)**
 - **Node.js 18+** and **npm**
 - *(Optional but recommended)* **MediaMTX** and **FFmpeg** for simulating live RTSP streams.
-- **Docker** and **Docker Compose** to run the containerized PostgreSQL database.
+
+No database server or Docker is required — SkyWatch uses a single local SQLite file, created automatically the first time the backend starts.
 
 > **Why Python 3.10?** In the AI/ML ecosystem, Python 3.10 is the universally supported standard. Newer versions of Python (like 3.12 or 3.14) lack stable pre-compiled C++ binaries ("wheels") for core dependencies like `numpy==1.26.3`, `torch`, and `opencv-python`. Sticking strictly to 3.10 guarantees that all deep learning libraries will install instantly without failing on complex C++ compiler errors.
 
@@ -125,35 +120,43 @@ cp .env.example .env
 
 ---
 
-### 3. Start the Database (Dockerized)
+### 3. Create the Python Environment
 
-SkyWatch uses a containerized PostGIS (PostgreSQL) database. To start it, run:
+Backend and CV pipeline share a single virtual environment at the project root, built from the consolidated `requirements.txt` (merged from `backend/`, `cv_pipeline/`, and `crowd_models/` — see that file's header for details on version pins). First install downloads PyTorch (~800 MB) — allow 5–10 minutes.
 
+**Linux / macOS:**
 ```bash
-docker-compose up -d db
+python3.10 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
+
+**Windows (PowerShell):**
+```powershell
+py -3.10 -m venv venv
+.\venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+> Prefer isolated environments instead? `backend/requirements.txt` and `cv_pipeline/requirements.txt` are still there and installable on their own.
 
 ---
 
 ### 4. Start the FastAPI Backend
 
-The backend connects to the Dockerized database automatically (ensure your `.env` is configured). If the database is completely unavailable, the system safely falls back to a persistent local SQLite database (`skywatch.db`) for testing.
+Open a **new terminal** window. The first run creates `backend/skywatch.db` automatically — nothing else to configure.
 
 **Linux / macOS:**
 ```bash
 cd backend
-python3.10 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+source ../venv/bin/activate
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 **Windows (PowerShell):**
 ```powershell
 cd backend
-py -3.10 -m venv venv
-.\venv\Scripts\activate
-pip install -r requirements.txt
+..\venv\Scripts\activate
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 *The API will be available at `http://localhost:8000`. Check `http://localhost:8000/health` to confirm it is running.*
@@ -169,41 +172,21 @@ cd frontend
 npm install
 npm run dev
 ```
-*The dashboard will be available at `http://localhost:5173`.*
+*The dashboard will be available at `http://localhost:5173`. Log in with `admin` / `admin`.*
 
 ---
 
-### 6. Start the CV Stream Processor
+### 6. Start a Drone Feed
 
-The processor acts as the "eyes" of the drone. It connects to a video source, analyzes it, and sends data to the backend. Note: First-time setup may take a few minutes as it downloads PyTorch and model weights.
+The easiest way: log into the dashboard as admin and use **Admin → Add Drone** — it launches `stream_processor.py` for you (point `Stream Source` at one of the sample files in `media/videos/`, or a live RTSP/RTMP/HTTP URL).
 
-Open a **new terminal** window:
-
-**Linux / macOS:**
-```bash
-cd cv_pipeline
-python3.10 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-**Windows (PowerShell):**
-```powershell
-cd cv_pipeline
-py -3.10 -m venv venv
-.\venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-#### Option A: Run Simulation (Managed via Frontend)
-You don't need to manually start the stream processor for local MP4 files. Simulated drone feeds and crowd analyses can be directly triggered and managed by an Admin via the SkyWatch frontend dashboard. Ensure the backend and frontend are running, log in as an admin, and initiate the simulation directly from the UI.
-
-#### Option B: Run with a Live Drone Stream (RTSP/RTMP/HTTP)
-If you have a real drone or are running an RTSP server (like MediaMTX), simply provide the URL. The processor will automatically handle network disconnects and retries.
+To run one manually instead (useful for watching its raw log output), open a **new terminal**:
 
 ```bash
+cd cv_pipeline
+source ../venv/bin/activate      # Windows: ..\venv\Scripts\activate
 python stream_processor.py \
-  --source "rtsp://your-drone-ip:554/live" \
+  --source "../media/videos/droneVid.mp4" \
   --fps 5 \
   --drone-id DRN-LIVE-01 \
   --drone-name "DJI Mavic 3" \
@@ -212,7 +195,7 @@ python stream_processor.py \
   --altitude 80
 ```
 
-> **Note:** To run multiple drones simultaneously, simply open additional terminals and run `stream_processor.py` with different `--drone-id`, coordinates, and `--source` values.
+> **Note:** To run multiple drones simultaneously (whether via the UI or manually), just use a different `--drone-id`, coordinates, and `--source` for each.
 
 ---
 
@@ -236,7 +219,6 @@ SkyWatch/
 ├── cv_pipeline/      # PyTorch CV pipeline & stream processing daemon
 ├── crowd_models/     # Crowd-counting model implementations (currently: vendored SDNet, ICCV 2025)
 ├── media/            # Sample video files for local simulation
-├── database/         # SQL scripts & database bootstrap
 ├── video-stream/     # Unfinished RTSP-simulator Docker service (see below)
 ├── .env.example      # Environment variables template
 ├── README.md         # You are here
@@ -255,10 +237,11 @@ A read-through of the codebase turned up files that were superseded, stubbed out
 - **Root**: `clean.sh`, `filter.sh`, `run_filter.py` (one-off `git filter-branch` scripts used to scrub a leaked Telegram bot token out of history), `package-lock.json` (empty, orphaned), `sync_data.ps1` + `frontend/public/headcount_data.csv` (synced a CSV that was never read by the frontend, from a pipeline that no longer exists).
 - **`cv_pipeline/`**: `main.py`, `heatmap.py`, `transformation.py`, `data_ingestion.py` and their sample artifacts (`dronetest.mp4`, `output_heatmap.mp4`, etc.) — the offline batch pipeline, never called by the live app. `drone_DRN-*.log` / `.json` — machine-generated per-drone runtime logs, now covered by `.gitignore` so they won't be committed again.
 - **Frontend**: `src/map.jsx` + `src/mapData.js` (prototype map, superseded by `components/MapView.jsx`), `src/data/mockData.js` (unused hard-coded drone data), `update_css.cjs` (one-off CSS patch script, not wired into any npm command), `src/assets/react.svg` (default Vite template leftover).
+- **Docker & Postgres, entirely**: `docker-compose.yml`'s `frontend` service referenced a Dockerfile that never existed under `frontend/` (would fail to build); its `backend` service was buildable but never actually used (docs always ran the backend as a local `uvicorn` process) and functionally incomplete anyway — the container had no access to the sibling `cv_pipeline/`/`media/` directories the backend needs to launch drones or serve videos. `backend/Dockerfile` removed with it. Investigating further turned up that the app's PostgreSQL/PostGIS support wasn't earning its keep either — no application query anywhere used a PostGIS spatial function, so it was pure overhead requiring a Docker Postgres container for zero benefit over the already-solid SQLite fallback. Removed Postgres support entirely rather than just defaulting away from it: `app/db.py` is now a plain SQLite module (no more dual-backend abstraction or Postgres-SQL-to-SQLite translation shim), `psycopg2-binary` is gone from every `requirements.txt`, and `docker-compose.yml` / `database/init.sql` (pure Postgres DDL, no longer referenced by anything) were deleted outright. Also dropped five dead settings from `backend/app/config.py` / `.env.example`: `RTSP_URL`, `FRAME_INTERVAL`, `YOLO_MODEL`, `CONFIDENCE_THRESHOLD` (only consumer was the already-removed `video_processor.py`) and now `DATABASE_URL` too. One real bug turned up along the way and got fixed: the SQLite `users` table was missing the `created_at` column `GET /api/auth/users` queried for — would have 500'd every time on a SQLite-backed install, pre-dating this change.
 
 ### Flagged but kept (by request)
 
-- **`video-stream/`** — the Docker Compose service that's supposed to simulate an RTSP feed. Its only script, `simulate_feed.py`, is an unimplemented stub (`print("Video stream simulator not yet implemented.")`) — the service currently does nothing. Real RTSP simulation is done manually via MediaMTX + FFmpeg per `RUNBOOK.md`. Kept in case it gets finished later.
+- **`video-stream/`** — meant to simulate an RTSP feed. Its only script, `simulate_feed.py`, is an unimplemented stub (`print("Video stream simulator not yet implemented.")`) — it currently does nothing, and there's no `docker-compose.yml` anymore to wire it into. Real RTSP simulation is done manually via MediaMTX + FFmpeg per `RUNBOOK.md`. Kept in case it gets finished later.
 - **`crowd_models/`'s training/reproduction code** — `datasets/`, `train.py`, `test.py`, `misc/{evaluation_code,KPI_pool,get_bbox,cal_mean,dataparallel,modelsummary,nms,inflation,pos_embed,post_process,tools}.py`, and `model/{PreciseRoIPooling,MatchTool,optimal_transport_layer.py,ViT/models_mae_cross.py}`. Verified by tracing the actual import graph from `model/VIC.py`: none of this is touched at inference time (notably, `PreciseRoIPooling`'s only reference anywhere is inside a fully commented-out training method). Kept intentionally so the paper's original training/eval pipeline stays reproducible and reusable as more models get added here.
 - **`backend/app/routers/density.py::get_heatmap_data`** (`GET /api/density/heatmap`) — stub endpoint, always returns `{"points": [], "timestamp": None}`; the frontend builds its heatmap client-side from `/api/density/current` instead. Left as-is since it's a single stub function, not a standalone file.
 

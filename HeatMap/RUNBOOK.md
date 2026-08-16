@@ -3,8 +3,8 @@
 Complete step-by-step guide to run SkyWatch with a live drone RTSP stream
 (`rtsp://localhost:8554/mystream`) using MediaMTX and FFmpeg.
 
-> **One-time setup** (Steps 1–3) only needs to be done once.  
-> **Every run** (Steps 4–7) must be repeated each time you start the project.
+> **One-time setup** (Steps 1–2) only needs to be done once.  
+> **Every run** (Terminals 1–5 below) must be repeated each time you start the project.
 
 ---
 
@@ -21,32 +21,18 @@ Complete step-by-step guide to run SkyWatch with a live drone RTSP stream
 
 ## One-Time Setup
 
-### Step 1 — Backend Python venv
+### Step 1 — Python environment
 
-Open a terminal in the `SkyWatch/` root:
-
-```powershell
-cd backend
-python -m venv venv
-.\venv\Scripts\pip install fastapi==0.109.0 uvicorn==0.27.0 "opencv-python==4.9.0.80" ultralytics sqlalchemy==2.0.25 python-dotenv==1.0.0 "numpy==1.26.3"
-```
-
-> `psycopg2-binary` is intentionally skipped — the backend uses an in-memory
-> SQLite database automatically when PostgreSQL is not available.
-
-### Step 2 — CV Pipeline Python venv
-
-Open another terminal in `SkyWatch/`:
+Backend and CV pipeline share one virtual environment, built from the project-root `requirements.txt`. Open a terminal in the `SkyWatch/` root:
 
 ```powershell
-cd cv_pipeline
 python -m venv venv
 .\venv\Scripts\pip install -r requirements.txt
 ```
 
-> This downloads PyTorch (~800 MB). Allow 5–10 minutes on first run.
+> This downloads PyTorch (~800 MB). Allow 5–10 minutes on first run. No database setup needed — SkyWatch uses a single local SQLite file created automatically on backend startup.
 
-### Step 3 — Frontend Node modules
+### Step 2 — Frontend Node modules
 
 Open another terminal in `SkyWatch/`:
 
@@ -115,18 +101,17 @@ Leave this terminal open.
 
 ```powershell
 cd "C:\Users\RAGHAV JHA\Desktop\The IIT Ropars work\6th sem\DEP\dep\SkyWatch\backend"
-.\venv\Scripts\uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+..\venv\Scripts\uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Expected output:
 ```
-[DB] PostgreSQL unavailable (...). Falling back to in-memory SQLite.
-[DB] In-memory SQLite database initialized.
+[DB] SQLite database ready at ...\SkyWatch\backend\skywatch.db
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000
 ```
 
-Verify: open http://localhost:8000/health — should return `{"status":"healthy","db_backend":"sqlite_memory"}`.
+Verify: open http://localhost:8000/health — should return `{"status":"healthy","db_backend":"sqlite","db_path":"..."}`.
 
 Leave this terminal open.
 
@@ -153,7 +138,7 @@ Leave this terminal open.
 
 ```powershell
 cd "C:\Users\RAGHAV JHA\Desktop\The IIT Ropars work\6th sem\DEP\dep\SkyWatch\cv_pipeline"
-.\venv\Scripts\python stream_processor.py `
+..\venv\Scripts\python stream_processor.py `
     --source rtsp://localhost:8554/mystream `
     --fps 5 `
     --drone-id DRN-RTSP-01 `
@@ -202,10 +187,10 @@ To point at a **real drone camera** instead of a looped file, just change `--sou
 
 ```powershell
 # DJI / Parrot via RTSP
-.\venv\Scripts\python stream_processor.py --source rtsp://192.168.1.10:554/live --fps 5 ...
+..\venv\Scripts\python stream_processor.py --source rtsp://192.168.1.10:554/live --fps 5 ...
 
 # HTTP MJPEG (GCS software, IP cameras)
-.\venv\Scripts\python stream_processor.py --source http://192.168.1.20:8080/video --fps 5 ...
+..\venv\Scripts\python stream_processor.py --source http://192.168.1.20:8080/video --fps 5 ...
 ```
 
 For real drone feeds, omit Step 2 (FFmpeg publisher) — the drone's GCS/app broadcasts directly.
@@ -238,7 +223,6 @@ Stop in reverse order (Ctrl+C in each terminal):
 | `Could not open stream` (stream processor) | Ensure MediaMTX and FFmpeg are both running first |
 | Stream processor keeps reconnecting | Check FFmpeg is publishing: `ffprobe rtsp://localhost:8554/mystream` |
 | Dashboard shows no drones | Stream processor must be running and posting data |
-| `[DB] PostgreSQL unavailable` | Expected — SQLite fallback is used. Data resets on backend restart. |
 | Backend port 8000 already in use | `netstat -ano \| findstr :8000` then `taskkill /PID <pid> /F` |
 | Frontend port 5173 already in use | `netstat -ano \| findstr :5173` then `taskkill /PID <pid> /F` |
 | SDNet model not found | Ensure `.pth` file is inside `SkyWatch/crowd_models/` |
