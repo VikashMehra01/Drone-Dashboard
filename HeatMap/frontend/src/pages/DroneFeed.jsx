@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Video, MapPin, Battery, Users, Activity, BarChart3, Radio } from 'lucide-react'
 import HlsPlayer from '../components/HlsPlayer'
+import { useDrones } from '../context/DronesContext'
 
 function getVideoNameFromUrl(url) {
     try {
@@ -63,69 +64,48 @@ function getHeatColor(value, maxIntensity) {
 }
 
 export default function DroneFeed() {
-    const [drones, setDrones] = useState([])
-    const [liveData, setLiveData] = useState({ points_count: 0, headcount: 0, timestamp: null })
-    const [streamMetricsByVideo, setStreamMetricsByVideo] = useState({})
-    const [frameIndex, setFrameIndex] = useState(0)
+    const { drones, currentDensity } = useDrones()
     const maxIntensity = 100
     const debugPlayback = new URLSearchParams(window.location.search).get('debugPlayback') === '1'
-
+    // Counts how many currentDensity updates have been seen, for the
+    // "Frame N" display below — a genuine subscription (depends on update
+    // sequence, not just the current value), so it's the one thing here that
+    // stays in an effect rather than the useMemo.
+    const [frameIndex, setFrameIndex] = useState(0)
     useEffect(() => {
-        const fetchDrones = async () => {
-            try {
-                const res = await fetch(`http://localhost:8000/api/drones/?include_debug=${debugPlayback}`)
-                if (res.ok) {
-                    const data = await res.json()
-                    setDrones(data.drones || [])
-                }
-            } catch (err) {
-                console.error('Failed to load live streams:', err)
-            }
+        // Not derivable via useMemo: this counts *how many* updates have
+        // occurred, not a function of currentDensity's current value.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setFrameIndex((prev) => prev + 1)
+    }, [currentDensity])
+
+    // drones and currentDensity both come from the shared DronesContext poll
+    // (one /api/drones/ + /api/density/current fetch per second, shared with
+    // Sidebar/Dashboard/MapView/DensityStats) — this is a pure derivation of
+    // that, so no effect/fetch of its own is needed.
+    const { liveData, streamMetricsByVideo } = useMemo(() => {
+        const streams = currentDensity.active_streams || {}
+        const byVideo = {}
+        let totalPoints = 0
+        let totalHeadcount = 0
+
+        Object.entries(streams).forEach(([source, stream]) => {
+            const videoName = getVideoNameFromUrl(source)
+            if (!videoName) return
+            byVideo[videoName] = stream
+            totalPoints += Number(stream?.points_count || 0)
+            totalHeadcount += Number(stream?.headcount || 0)
+        })
+
+        return {
+            streamMetricsByVideo: byVideo,
+            liveData: {
+                points_count: totalPoints,
+                headcount: totalHeadcount,
+                timestamp: currentDensity.current_data?.timestamp || null,
+            },
         }
-
-        fetchDrones()
-        const interval = setInterval(fetchDrones, 1000)
-        return () => clearInterval(interval)
-    }, [])
-
-    useEffect(() => {
-        const fetchDensity = async () => {
-            try {
-                const res = await fetch('http://localhost:8000/api/density/current')
-                if (res.ok) {
-                    const data = await res.json()
-                    const streams = data.active_streams || {}
-                    const byVideo = {}
-                    let totalPoints = 0
-                    let totalHeadcount = 0
-
-                    Object.entries(streams).forEach(([source, stream]) => {
-                        const videoName = getVideoNameFromUrl(source)
-                        if (!videoName) return
-                        byVideo[videoName] = stream
-                        totalPoints += Number(stream?.points_count || 0)
-                        totalHeadcount += Number(stream?.headcount || 0)
-                    })
-
-                    setStreamMetricsByVideo(byVideo)
-                    setLiveData({
-                        points_count: totalPoints,
-                        headcount: totalHeadcount,
-                        timestamp: data.current_data?.timestamp || null,
-                    })
-                    setFrameIndex((prev) => prev + 1)
-                }
-            } catch (err) {
-                console.error('Failed to load live density:', err)
-            }
-        }
-
-        fetchDensity()
-        const interval = setInterval(() => {
-            fetchDensity()
-        }, 1000)
-        return () => clearInterval(interval)
-    }, [])
+    }, [currentDensity])
 
     const frameData = {
         frame_index: frameIndex,

@@ -14,10 +14,21 @@ import psutil
 
 
 def is_alive(pid: int | None) -> bool:
-    """True if `pid` refers to a currently-running process."""
-    if not pid:
+    """True if `pid` refers to a process that's actually doing something.
+
+    `psutil.pid_exists()` alone isn't enough: a crashed child whose parent
+    (this backend) never called wait()/poll() on it stays in the process
+    table as a zombie — pid_exists() still returns True for it, even though
+    it's doing no useful work (this is exactly what happens to a stream_
+    processor.py that exits, e.g. from a bad --source path, while the
+    backend that spawned it keeps running under --reload).
+    """
+    if not pid or not psutil.pid_exists(pid):
         return False
-    return psutil.pid_exists(pid)
+    try:
+        return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return False
 
 
 def terminate(pid: int | None, timeout: float = 5.0) -> bool:
@@ -26,9 +37,10 @@ def terminate(pid: int | None, timeout: float = 5.0) -> bool:
     doesn't exit within `timeout` seconds. Works identically on every OS.
 
     Returns True if a live process was found and terminated, False if it was
-    already gone (or `pid` is falsy).
+    already gone — not running, or a zombie (already exited, just not yet
+    reaped by its parent — nothing left to signal) — or `pid` is falsy.
     """
-    if not pid or not psutil.pid_exists(pid):
+    if not is_alive(pid):
         return False
     try:
         proc = psutil.Process(pid)

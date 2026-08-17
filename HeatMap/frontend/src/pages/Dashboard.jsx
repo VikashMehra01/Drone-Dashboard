@@ -4,6 +4,7 @@ import DensityStats from '../components/DensityStats'
 import DroneCard from '../components/DroneCard'
 import FleetFilterBar from '../components/FleetFilterBar'
 import { useRegionResolver } from '../utils/useRegionResolver'
+import { useDrones } from '../context/DronesContext'
 
 // ── Persist filter state across page refreshes ───────────────────────────────
 function loadPersistedFilters() {
@@ -44,10 +45,8 @@ function compareDrones(a, b, sortBy, maxIntensityByDrone) {
 }
 
 export default function Dashboard() {
-    const debugPlayback = new URLSearchParams(window.location.search).get('debugPlayback') === '1'
-
     // ── Core data ────────────────────────────────────────────────────────────
-    const [drones, setDrones] = useState([])
+    const { drones } = useDrones()
     const [focusedDroneId, setFocusedDroneId] = useState(null)
     const [focusRequestId, setFocusRequestId] = useState(0)
     const [selectedDrone, setSelectedDrone] = useState(null)
@@ -105,23 +104,6 @@ export default function Dashboard() {
             // Ignore storage failures.
         }
     }, [autoViewDrones])
-
-    useEffect(() => {
-        const fetchDrones = async () => {
-            try {
-                const res = await fetch(`http://localhost:8000/api/drones/?include_debug=${debugPlayback}`)
-                if (res.ok) {
-                    const data = await res.json()
-                    setDrones(data.drones || [])
-                }
-            } catch (err) {
-                console.error('Failed to load drones:', err)
-            }
-        }
-        fetchDrones()
-        const interval = setInterval(fetchDrones, 5000)
-        return () => clearInterval(interval)
-    }, [])
 
     // ── Derive per-drone isCritical ───────────────────────────────────────────
     const dronesWithMeta = useMemo(() => drones.map(drone => {

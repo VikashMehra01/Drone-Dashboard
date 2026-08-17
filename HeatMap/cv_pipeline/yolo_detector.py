@@ -11,7 +11,13 @@ from stream_config import DETECTION_MAX_WIDTH
 
 
 class YOLODetector:
-    def __init__(self, weights_path: str = "yolov8n.pt", device: str = None, confidence: float = 0.35):
+    def __init__(self, weights_path: str = "yolov8n.pt", device: str = None, confidence: float = 0.35,
+                 person_classes: list[int] | None = None):
+        # Which output class indices count as "a person" — model-specific.
+        # COCO has a single `person` class (0); VisDrone splits `pedestrian`
+        # (0) from `people` in other postures (1), both need counting.
+        # Defaults to COCO's [0] for backward compatibility.
+        self.person_classes = person_classes if person_classes is not None else [0]
         # PyTorch 2.6 changed torch.load default to weights_only=True.
         # For trusted local YOLO checkpoints, force the old behavior.
         os.environ.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
@@ -53,7 +59,7 @@ class YOLODetector:
             frame = cv2.resize(frame, (DETECTION_MAX_WIDTH, target_h))
 
         # Inference returns a Results object with boxes and classes
-        results = self.model(frame, conf=self.confidence, classes=[0])
+        results = self.model(frame, conf=self.confidence, classes=self.person_classes)
         points = []
         total = 0
 

@@ -26,6 +26,7 @@ from stream_config import (
     RECONNECT_DELAY_SECONDS,
     MAX_RECONNECT_DELAY_SECONDS,
     MAX_RECONNECT_ATTEMPTS,
+    MODEL_PRESETS,
 )
 
 # FastAPI endpoint for updating live density
@@ -253,8 +254,11 @@ if __name__ == "__main__":
             "Ignored when source is a live URL."
         ),
     )
-    parser.add_argument("--model", type=str, default="sdnet", choices=["sdnet", "yolo"],
-                        help="Detector type (default: sdnet)")
+    parser.add_argument(
+        "--model", type=str, default="sdnet", choices=list(MODEL_PRESETS.keys()),
+        help="Detector model (default: sdnet). Options: " +
+             "; ".join(f"{k} = {v['label']}" for k, v in MODEL_PRESETS.items()),
+    )
     parser.add_argument("--model-path", type=str, default=None,
                         help="Optional path to model weights")
     parser.add_argument("--device", type=str, default=None,

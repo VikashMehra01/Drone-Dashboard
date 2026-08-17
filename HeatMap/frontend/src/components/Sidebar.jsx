@@ -1,10 +1,12 @@
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import {
     LayoutDashboard, Video, BarChart3, Radio,
     Shield, Info, WifiOff, PlusCircle, UserPlus, LogOut, Settings2,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { useDrones } from '../context/DronesContext'
+import { useModelOptions } from '../utils/useModelOptions'
 import AdminPanel from './AdminPanel'
 
 // MUI
@@ -37,6 +39,7 @@ function AddDroneModal({ open, onClose, authFetch }) {
     const [form, setForm] = useState(init)
     const [loading, setLoading] = useState(false)
     const [msg, setMsg] = useState(null)   // { text, severity }
+    const modelOptions = useModelOptions(authFetch)
 
     const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -108,8 +111,9 @@ function AddDroneModal({ open, onClose, authFetch }) {
                                 onChange={e => set('model', e.target.value)}
                                 SelectProps={{ MenuProps: { disablePortal: true } }}
                             >
-                                <MenuItem value="sdnet">SDNet (crowd density)</MenuItem>
-                                <MenuItem value="yolo">YOLO (object detection)</MenuItem>
+                                {modelOptions.map(m => (
+                                    <MenuItem key={m.key} value={m.key}>{m.label}</MenuItem>
+                                ))}
                             </TextField>
                             <TextField
                                 select label="Device" value={form.device} size="small" fullWidth
@@ -221,24 +225,12 @@ function AddMemberModal({ open, onClose, authFetch }) {
 export default function Sidebar() {
     const location = useLocation()
     const navigate = useNavigate()
-    const [isOnline, setIsOnline] = useState(true)
+    const { isOnline } = useDrones()
     const [showAddDrone, setShowAddDrone] = useState(false)
     const [showAddMember, setShowAddMember] = useState(false)
     const [showAdminPanel, setShowAdminPanel] = useState(false)
     const { user, logout, authFetch } = useAuth()
     const isAdmin = user?.role === 'admin'
-
-    useEffect(() => {
-        const checkStatus = async () => {
-            try {
-                const res = await fetch('http://localhost:8000/api/drones/', { method: 'GET' })
-                setIsOnline(res.ok)
-            } catch { setIsOnline(false) }
-        }
-        checkStatus()
-        const interval = setInterval(checkStatus, 3000)
-        return () => clearInterval(interval)
-    }, [])
 
     const handleLogout = () => { logout(); navigate('/login', { replace: true }) }
 

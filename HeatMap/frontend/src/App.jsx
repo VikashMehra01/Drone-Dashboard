@@ -5,6 +5,7 @@ import ProtectedRoute from './components/ProtectedRoute'
 import { NotificationProvider } from './context/NotificationContext'
 import { SettingsProvider } from './context/SettingsContext'
 import { AuthProvider } from './context/AuthContext'
+import { DronesProvider } from './context/DronesContext'
 import Dashboard from './pages/Dashboard'
 import DroneFeed from './pages/DroneFeed'
 import Analytics from './pages/Analytics'
@@ -109,20 +110,22 @@ function AppContent() {
               path="/*"
               element={
                 <ProtectedRoute>
-                  <div className="app-layout">
-                    <Sidebar />
-                    <div className="main-content">
-                      <Navbar />
-                      <div className="page-content">
-                        <Routes>
-                          <Route path="/" element={<Dashboard />} />
-                          <Route path="/feeds" element={<DroneFeed />} />
-                          <Route path="/analytics" element={<Analytics />} />
-                          <Route path="/about" element={<About />} />
-                        </Routes>
+                  <DronesProvider>
+                    <div className="app-layout">
+                      <Sidebar />
+                      <div className="main-content">
+                        <Navbar />
+                        <div className="page-content">
+                          <Routes>
+                            <Route path="/" element={<Dashboard />} />
+                            <Route path="/feeds" element={<DroneFeed />} />
+                            <Route path="/analytics" element={<Analytics />} />
+                            <Route path="/about" element={<About />} />
+                          </Routes>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  </DronesProvider>
                 </ProtectedRoute>
               }
             />

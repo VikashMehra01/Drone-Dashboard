@@ -228,6 +228,60 @@ def _resolve_paths():
     return drone_dir, drone_dir / "stream_processor.py", python_exe
 
 
+def _load_stream_config():
+    """Load cv_pipeline/stream_config.py as a module. Loaded directly from the
+    file rather than a package import so this doesn't require torch/cv2/etc.
+    to be installed in the backend's venv; stream_config.py itself is pure
+    stdlib.
+    """
+    import importlib.util
+    drone_dir, _, _ = _resolve_paths()
+    spec = importlib.util.spec_from_file_location("cv_pipeline_stream_config", drone_dir / "stream_config.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_model_presets() -> dict:
+    """cv_pipeline/stream_config.py's MODEL_PRESETS — the single source of
+    truth for which detection models are available (see that file for the
+    list)."""
+    return _load_stream_config().MODEL_PRESETS
+
+
+def _validate_source(source: str, drone_dir) -> str | None:
+    """Returns an error message if `source` is a local file path that
+    doesn't exist, or None if it's fine (a live stream URL, or a file that
+    exists).
+
+    Without this check, a bad local path (e.g. a typo) only surfaces as a
+    crash deep inside stream_processor.py — but that happens *after* the
+    detection model finishes loading (several seconds), well past the 1s
+    crash-check window in launch_drone/resume_drone below. The API call
+    reports success, the drone just silently never goes active, and nothing
+    in the UI ever explains why. Checking here catches it immediately and
+    returns a clear error instead.
+    """
+    from urllib.parse import urlparse
+    if urlparse(source).scheme.lower() in _load_stream_config().LIVE_URL_SCHEMES:
+        return None
+    from pathlib import Path
+    resolved = (drone_dir / source).resolve()
+    if not resolved.is_file():
+        return f"Video file not found: '{source}' (resolved to {resolved})"
+    return None
+
+
+@router.get("/models")
+async def list_models(_admin: dict = Depends(require_admin)):
+    """(Admin) List available detection models, sourced from cv_pipeline/stream_config.py."""
+    try:
+        presets = _load_model_presets()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not load model list: {e}")
+    return [{"key": key, "label": preset.get("label", key)} for key, preset in presets.items()]
+
+
 def _build_cmd(python_exe: str, processor, config: dict) -> list:
     return [
         python_exe, str(processor),
@@ -474,6 +528,10 @@ async def resume_drone(drone_id: str, _admin: dict = Depends(require_admin)):
     if not processor.exists():
         raise HTTPException(status_code=404, detail="stream_processor.py not found.")
 
+    source_error = _validate_source(config["source"], drone_dir)
+    if source_error:
+        raise HTTPException(status_code=400, detail=source_error)
+
     cmd = _build_cmd(python_exe, processor, config)
     log_path = drone_dir / f"drone_{drone_id}.log"
 
@@ -509,6 +567,10 @@ async def launch_drone(body: AddDroneRequest, _admin: dict = Depends(require_adm
     drone_dir, processor, python_exe = _resolve_paths()
     if not processor.exists():
         raise HTTPException(status_code=404, detail=f"stream_processor.py not found at {processor}")
+
+    source_error = _validate_source(body.source, drone_dir)
+    if source_error:
+        raise HTTPException(status_code=400, detail=source_error)
 
     config = {
         "drone_id": body.drone_id, "drone_name": body.drone_name,

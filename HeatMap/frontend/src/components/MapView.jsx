@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import { X, Video, BarChart3, SlidersHorizontal, Radio, RotateCcw } from 'lucide-react'
 import { useNotification } from '../context/NotificationContext'
 import { useSettings } from '../context/SettingsContext'
+import { useDrones } from '../context/DronesContext'
 import HlsPlayer from './HlsPlayer'
 
 /**
@@ -282,7 +283,7 @@ export default function MapView({
     const detailsPanelRef = useRef(null)
     const dragOffsetRef = useRef({ x: 0, y: 0 })
     const circleRefs = useRef({})
-    const [drones, setDrones] = useState([])
+    const { drones, currentDensity } = useDrones()
     const activeDrones = drones.filter((d) => d.status === 'active' || d.status === 'debug')
     const center = activeDrones.length > 0
         ? [Number(activeDrones[0].latitude || defaultCenter[0]), Number(activeDrones[0].longitude || defaultCenter[1])]
@@ -307,7 +308,6 @@ export default function MapView({
     const [loopVideo, setLoopVideo] = useState(true)
     const [isDraggingDetails, setIsDraggingDetails] = useState(false)
     const [detailsPanelPosition, setDetailsPanelPosition] = useState({ x: 18, y: 92 })
-    const debugPlayback = new URLSearchParams(window.location.search).get('debugPlayback') === '1'
     const focusedDrone = useMemo(
         () => drones.find((d) => d.id === focusedDroneId) || null,
         [drones, focusedDroneId]
@@ -316,69 +316,56 @@ export default function MapView({
     const tileTheme = 'light_all'
     const mapTileUrl = `https://{s}.basemaps.cartocdn.com/${tileTheme}/{z}/{x}/{y}{r}.png`
 
-    useEffect(() => {
-        const fetchDrones = async () => {
-            try {
-                const res = await fetch(`http://localhost:8000/api/drones/?include_debug=${debugPlayback}`)
-                if (res.ok) {
-                    const data = await res.json()
-                    setDrones(data.drones || [])
-                }
-            } catch (err) {
-                console.error('Error fetching live streams', err)
-            }
+    // drones and currentDensity both come from the shared DronesContext poll
+    // (one /api/drones/ + /api/density/current fetch per second, shared with
+    // Sidebar/Dashboard/DensityStats/DroneFeed). The breakdown below is a
+    // pure derivation of currentDensity, recomputed on every poll tick
+    // regardless of isPlaying.
+    const densityDerived = useMemo(() => {
+        const streams = currentDensity.active_streams || {}
+        const byVideo = {}
+        let totalPoints = 0
+        let totalHeadcount = 0
+        let anyLoopTrue = false
+
+        Object.entries(streams).forEach(([source, stream]) => {
+            const videoName = getVideoNameFromUrl(source)
+            if (!videoName) return
+            byVideo[videoName] = stream
+            totalPoints += Number(stream?.points_count || 0)
+            totalHeadcount += Number(stream?.headcount || 0)
+            anyLoopTrue = anyLoopTrue || stream?.loop_video !== false
+        })
+
+        return {
+            byVideo,
+            loopVideo: Object.keys(byVideo).length > 0 ? anyLoopTrue : (currentDensity.current_data?.loop_video !== false),
+            headcount: totalPoints,
+            headcount_density: totalHeadcount,
         }
+    }, [currentDensity])
 
-        fetchDrones()
-        const interval = setInterval(fetchDrones, 1000)
-        return () => clearInterval(interval)
-    }, [])
-
-    // Poll actual live API instead of CSV
+    const frameCounterRef = useRef(0)
+    // Not a pure derivation, so this stays an effect rather than folding into
+    // the useMemo above: it (a) freezes the displayed snapshot while paused
+    // instead of tracking densityDerived live, and (b) fires the alert-
+    // processing side effect below.
     useEffect(() => {
-        let frameCounter = 0;
-        const fetchDensity = async () => {
-            if (!isPlaying) return;
-            try {
-                const res = await fetch('http://localhost:8000/api/density/current');
-                if (res.ok) {
-                    const data = await res.json();
-                    const streams = data.active_streams || {}
-                    const byVideo = {}
-                    let totalPoints = 0
-                    let totalHeadcount = 0
-                    let anyLoopTrue = false
+        if (!isPlaying) return;
 
-                    Object.entries(streams).forEach(([source, stream]) => {
-                        const videoName = getVideoNameFromUrl(source)
-                        if (!videoName) return
-                        byVideo[videoName] = stream
-                        totalPoints += Number(stream?.points_count || 0)
-                        totalHeadcount += Number(stream?.headcount || 0)
-                        anyLoopTrue = anyLoopTrue || stream?.loop_video !== false
-                    })
+        frameCounterRef.current += 1;
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setStreamMetricsByVideo(densityDerived.byVideo)
+        setLoopVideo(densityDerived.loopVideo);
+        setLiveData({
+            headcount: densityDerived.headcount,
+            headcount_density: densityDerived.headcount_density,
+            frame_index: frameCounterRef.current
+        });
 
-                    frameCounter++;
-                    setStreamMetricsByVideo(byVideo)
-                    setLoopVideo(Object.keys(byVideo).length > 0 ? anyLoopTrue : (data.current_data?.loop_video !== false));
-                    setLiveData({
-                        headcount: totalPoints,
-                        headcount_density: totalHeadcount,
-                        frame_index: frameCounter
-                    });
-                    
-                    // Trigger alert processing loop using refs to avoid stale closures
-                    processStreamData(dronesRef.current, byVideo, maxIntensityRef.current);
-                }
-            } catch (err) {
-                console.error("Error fetching live density", err);
-            }
-        };
-
-        fetchDensity();
-        const interval = setInterval(fetchDensity, 1000); // refresh every 1s
-        return () => clearInterval(interval);
-    }, [isPlaying]);
+        // Trigger alert processing loop using refs to avoid stale closures
+        processStreamData(dronesRef.current, densityDerived.byVideo, maxIntensityRef.current);
+    }, [densityDerived, isPlaying]);
 
     // Use liveData as frameData
     const frameData = liveData;

@@ -36,6 +36,44 @@ DEFAULT_NUM_THREADS = 2
 MIN_CONFIDENCE = 0.5  # Minimum confidence for detections
 MAX_DETECTIONS = 1000  # Cap on points per frame
 
+# ---------------------------------------------------------------------------
+# Model presets — the list of selectable `--model <key>` values.
+# ---------------------------------------------------------------------------
+# Add a new pretrained model by adding an entry here — no changes needed in
+# detection.py or stream_processor.py. Each entry:
+#   detector       - which detector *implementation* backs it (see
+#                    detection.py's _DETECTOR_CLASSES; only add a new one of
+#                    these when the model needs genuinely new inference code,
+#                    not for a same-architecture model with different weights)
+#   weights        - default weights path (relative to cv_pipeline/), or None
+#                    to auto-discover (sdnet: first *.pth in crowd_models/).
+#                    Always overridable via --model-path.
+#   label          - human-readable description, shown in --help and usable
+#                    by any future admin-UI model picker.
+#   person_classes - (yolo only) which of the model's output classes count as
+#                    a person. COCO has a single `person` class; VisDrone
+#                    splits standing/walking `pedestrian` from `people` in
+#                    other postures, so both must be counted.
+MODEL_PRESETS = {
+    "sdnet": {
+        "detector": "sdnet",
+        "weights": None,
+        "label": "SDNet (MovingDroneCrowd, temporal density map)",
+    },
+    "yolo": {
+        "detector": "yolo",
+        "weights": "yolov8n.pt",
+        "person_classes": [0],
+        "label": "YOLOv8n (COCO) — general-purpose, ground-level photos",
+    },
+    "yolo-visdrone": {
+        "detector": "yolo",
+        "weights": "weights/yolov8n-visdrone.pt",
+        "person_classes": [0, 1],
+        "label": "YOLOv8n (VisDrone) — aerial/drone-camera pretrained",
+    },
+}
+
 # Logging
 VERBOSE = False  # Set to False for silent mode
 PRINT_INTERVAL = 10  # Print stats every N frames

@@ -1,71 +1,52 @@
-import { useState, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import { Users, BarChart3, AlertTriangle, Info } from 'lucide-react'
-import { useSettings } from '../context/SettingsContext'
+import { useDrones } from '../context/DronesContext'
 import droneIcon from '../assets/drone.png'
 
 const DroneImageIcon = ({ size }) => <img src={droneIcon} alt="Drone" style={{ width: size, height: size, objectFit: 'contain' }} />
 
 export default function DensityStats() {
-    const [liveData, setLiveData] = useState({ headcount: 0 });
-    const [activeDroneCount, setActiveDroneCount] = useState(0);
-    const [totalDroneCount, setTotalDroneCount] = useState(0);
-    const [criticalZonesCount, setCriticalZonesCount] = useState(0);
-    const [avgDensity, setAvgDensity] = useState(0);
-    const debugPlayback = new URLSearchParams(window.location.search).get('debugPlayback') === '1'
+    const { drones } = useDrones()
     const [expandedInfo, setExpandedInfo] = useState(null);
 
-    useEffect(() => {
-        const fetchDrones = async () => {
-            try {
-                const res = await fetch(`http://localhost:8000/api/drones/?include_debug=${debugPlayback}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    const drones = data.drones || [];
-                    const activeDrones = drones.filter((d) => d.status === 'active' || d.status === 'debug');
+    // All of this is a pure derivation of `drones` (from the shared
+    // DronesContext poll) — no fetch of its own, so no effect needed.
+    const { liveData, activeDroneCount, totalDroneCount, criticalZonesCount, avgDensity } = useMemo(() => {
+        const activeDrones = drones.filter((d) => d.status === 'active' || d.status === 'debug');
 
-                    setTotalDroneCount(drones.length);
-                    setActiveDroneCount(activeDrones.length);
+        const totalPeopleFromDrones = activeDrones.reduce(
+            (sum, d) => sum + Number(d.headcountDensity || 0),
+            0,
+        );
+        const computedAvgDensity = Math.round(totalPeopleFromDrones / (activeDrones.length || 1));
 
-                    const totalPeopleFromDrones = activeDrones.reduce(
-                        (sum, d) => sum + Number(d.headcountDensity || 0),
-                        0,
-                    );
-                    setLiveData({ headcount: totalPeopleFromDrones });
-
-                    const computedAvgDensity = Math.round(totalPeopleFromDrones / (activeDrones.length || 1));
-                    setAvgDensity(computedAvgDensity);
-
-                    let thresholdsByDrone = {};
-                    try {
-                        const raw = localStorage.getItem('maxIntensityByDrone');
-                        if (raw) {
-                            const parsed = JSON.parse(raw);
-                            if (parsed && typeof parsed === 'object') {
-                                thresholdsByDrone = parsed;
-                            }
-                        }
-                    } catch {
-                        thresholdsByDrone = {};
-                    }
-
-                    const criticalCount = activeDrones.reduce((count, d) => {
-                        const threshold = Number(thresholdsByDrone[d.id] ?? 100);
-                        const density = Number(d.headcountDensity || 0);
-                        return count + (density >= threshold ? 1 : 0);
-                    }, 0);
-                    setCriticalZonesCount(criticalCount);
+        let thresholdsByDrone = {};
+        try {
+            const raw = localStorage.getItem('maxIntensityByDrone');
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed && typeof parsed === 'object') {
+                    thresholdsByDrone = parsed;
                 }
-            } catch (err) {
-                console.error("Error fetching drones", err);
             }
-        };
+        } catch {
+            thresholdsByDrone = {};
+        }
 
-        fetchDrones();
-        const droneInterval = setInterval(fetchDrones, 1000);
-        return () => {
-            clearInterval(droneInterval);
+        const criticalCount = activeDrones.reduce((count, d) => {
+            const threshold = Number(thresholdsByDrone[d.id] ?? 100);
+            const density = Number(d.headcountDensity || 0);
+            return count + (density >= threshold ? 1 : 0);
+        }, 0);
+
+        return {
+            liveData: { headcount: totalPeopleFromDrones },
+            activeDroneCount: activeDrones.length,
+            totalDroneCount: drones.length,
+            criticalZonesCount: criticalCount,
+            avgDensity: computedAvgDensity,
         };
-    }, []);
+    }, [drones]);
 
     // Use liveData.headcount derived from active drone streams
     const totalPeople = Math.round(liveData.headcount) || 0;

@@ -6,6 +6,7 @@ import {
     Square, Play, Search, ArrowUpDown, Edit,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { useModelOptions } from '../utils/useModelOptions'
 
 // MUI
 import Dialog from '@mui/material/Dialog'
@@ -152,6 +153,7 @@ function EditDroneModal({ drone, onClose, authFetch, onSuccess }) {
     })
     const [loading, setLoading] = useState(false)
     const [err, setErr] = useState('')
+    const modelOptions = useModelOptions(authFetch)
 
     const handleChange = (e) => {
         const { name, value } = e.target
@@ -212,8 +214,9 @@ function EditDroneModal({ drone, onClose, authFetch, onSuccess }) {
                     <FormControl size="small" fullWidth>
                         <InputLabel>Model</InputLabel>
                         <Select name="model" value={formData.model} onChange={handleChange} label="Model">
-                            <MenuItem value="sdnet">sdnet</MenuItem>
-                            <MenuItem value="yolo">yolo</MenuItem>
+                            {modelOptions.map(m => (
+                                <MenuItem key={m.key} value={m.key}>{m.label}</MenuItem>
+                            ))}
                         </Select>
                     </FormControl>
 
