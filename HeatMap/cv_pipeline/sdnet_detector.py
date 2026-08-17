@@ -12,6 +12,8 @@ import cv2
 from PIL import Image
 import torchvision.transforms as standard_transforms
 
+from stream_config import DETECTION_MAX_WIDTH
+
 # Add crowd_models/ to sys.path so we can import its modules
 MDC_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'crowd_models')
 sys.path.insert(0, os.path.abspath(MDC_ROOT))
@@ -80,7 +82,7 @@ class SDNetDetector:
         h, w = frame_bgr.shape[:2]
         
         # Aggressive downscaling to speed up CPU inference (targeting ~200ms)
-        target_w = 480
+        target_w = DETECTION_MAX_WIDTH
         if w > target_w:
             target_h = int(h * (target_w / w))
             frame_resized = cv2.resize(frame_bgr, (target_w, target_h))

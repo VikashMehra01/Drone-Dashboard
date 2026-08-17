@@ -21,9 +21,16 @@ API_PORT = 8000
 API_UPDATE_ENDPOINT = f"http://{API_HOST}:{API_PORT}/api/density/update"
 
 # Stream Quality
-FRAME_DOWNSCALE = 0.5  # Reduce frame size to 50% for faster processing
-TARGET_WIDTH = 640  # Target width after downscaling
-TARGET_HEIGHT = 480  # Target height after downscaling
+# Frames are downscaled to this width (aspect ratio preserved) before being
+# handed to any detector — bounds per-frame CPU cost and keeps the input
+# resolution identical across detectors (sdnet, yolo, ...) for fair benchmarking.
+DETECTION_MAX_WIDTH = 480  # matches SDNet's existing proven working size
+
+# CPU thread cap for PyTorch/OpenCV. Without this, a single inference call
+# claims every logical core on the machine (PyTorch/OpenCV both default to
+# using all cores for one process) — this is what actually causes "CPU usage
+# spikes very heavily" with just one drone running. Override with --threads.
+DEFAULT_NUM_THREADS = 2
 
 # Detection Tuning
 MIN_CONFIDENCE = 0.5  # Minimum confidence for detections

@@ -7,6 +7,8 @@ import os
 import cv2
 import numpy as np
 
+from stream_config import DETECTION_MAX_WIDTH
+
 
 class YOLODetector:
     def __init__(self, weights_path: str = "yolov8n.pt", device: str = None, confidence: float = 0.35):
@@ -40,6 +42,16 @@ class YOLODetector:
         self.confidence = confidence
 
     def detect_people(self, frame: np.ndarray) -> Tuple[List[Tuple[int, int]], float]:
+        # Downscale before inference (aspect ratio preserved) — bounds CPU cost
+        # and keeps the input resolution consistent with the SDNet path, for
+        # fair model-vs-model comparisons. Only the point *count*, not these
+        # pixel coordinates, ever crosses the wire to the backend, so operating
+        # in downscaled coordinate space here is safe.
+        h, w = frame.shape[:2]
+        if w > DETECTION_MAX_WIDTH:
+            target_h = int(h * (DETECTION_MAX_WIDTH / w))
+            frame = cv2.resize(frame, (DETECTION_MAX_WIDTH, target_h))
+
         # Inference returns a Results object with boxes and classes
         results = self.model(frame, conf=self.confidence, classes=[0])
         points = []

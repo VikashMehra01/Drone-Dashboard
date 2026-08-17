@@ -1,7 +1,21 @@
+import os
+
+# Must happen before `detection` (which pulls in torch/ultralytics) is
+# imported below — OpenMP/MKL read these env vars once at library init, not
+# per-call. This just keeps the initial thread pool sane; the actual thread
+# count (possibly overridden via --threads) is applied for real further down
+# via torch.set_num_threads()/cv2.setNumThreads(). Without any of this, a
+# single inference call claims every logical core on the machine, which is
+# what actually causes heavy CPU spikes even with just one drone running.
+from stream_config import DEFAULT_NUM_THREADS
+os.environ.setdefault("OMP_NUM_THREADS", str(DEFAULT_NUM_THREADS))
+os.environ.setdefault("MKL_NUM_THREADS", str(DEFAULT_NUM_THREADS))
+
 import cv2
 import time
 import requests
 import argparse
+import torch
 from urllib.parse import urlparse
 from detection import PersonDetector
 from stream_config import (
@@ -16,6 +30,18 @@ from stream_config import (
 
 # FastAPI endpoint for updating live density
 API_UPDATE_URL = API_UPDATE_ENDPOINT
+
+
+def _apply_thread_cap(num_threads: int) -> None:
+    """Cap PyTorch + OpenCV to `num_threads` CPU threads for this process.
+
+    Both default to using every logical core for a single inference call —
+    this is the actual cause of "CPU usage spikes very heavily" with just
+    one drone running. See stream_config.DEFAULT_NUM_THREADS.
+    """
+    torch.set_num_threads(num_threads)
+    cv2.setNumThreads(num_threads)
+    print(f"[StreamProcessor] CPU threads capped at {num_threads} (PyTorch + OpenCV)")
 
 
 def is_live_url(source: str) -> bool:
@@ -45,6 +71,7 @@ def process_stream(
     device: str | None = None,
     yolo_confidence: float = 0.35,
     max_reconnect_attempts: int = MAX_RECONNECT_ATTEMPTS,
+    num_threads: int = DEFAULT_NUM_THREADS,
 ):
     """
     Process a video source (local file OR live network stream URL) at a given FPS,
@@ -55,6 +82,7 @@ def process_stream(
       - loop_video is ignored (always False) for live URLs.
       - max_reconnect_attempts = 0 means retry indefinitely.
     """
+    _apply_thread_cap(num_threads)
     live = is_live_url(source)
 
     # For live streams, looping is meaningless — disable it.
@@ -242,6 +270,13 @@ if __name__ == "__main__":
             "Ignored for local files."
         ),
     )
+    parser.add_argument(
+        "--threads", type=int, default=DEFAULT_NUM_THREADS,
+        help=(
+            f"CPU threads PyTorch/OpenCV may use for inference (default: {DEFAULT_NUM_THREADS}). "
+            "Without a cap, a single inference call uses every core on the machine."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -260,4 +295,5 @@ if __name__ == "__main__":
         device=args.device,
         yolo_confidence=args.yolo_confidence,
         max_reconnect_attempts=args.max_reconnect_attempts,
+        num_threads=args.threads,
     )
