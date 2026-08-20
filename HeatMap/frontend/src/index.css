@@ -493,10 +493,19 @@ a {
 }
 
 /* ===== Dashboard Grid ===== */
+.dashboard-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: 1fr 360px;
+  grid-template-rows: minmax(0, 1fr);
   gap: 20px;
+  flex: 1;
+  min-height: 0;
 }
 
 /* ===== Map Container ===== */
@@ -506,6 +515,8 @@ a {
   border-radius: var(--radius-md);
   overflow: hidden;
   position: relative;
+  display: flex;
+  flex-direction: column;
 }
 
 .map-header {
@@ -552,7 +563,8 @@ a {
 }
 
 .leaflet-map {
-  height: 480px;
+  flex: 1;
+  min-height: 420px;
   width: 100%;
 }
 
@@ -586,7 +598,7 @@ a {
   border-radius: var(--radius-md);
   display: flex;
   flex-direction: column;
-  max-height: calc(480px + 90px);
+  min-height: 0;
 }
 
 .drones-panel-header {
@@ -937,7 +949,11 @@ a {
   background: var(--color-bg-primary) !important;
 }
 
-.leaflet-tile-pane {
+/* The basemap is always CARTO's "light_all" tiles (see MapView.jsx), so in
+   light mode they should render clean and bright as designed. In dark mode,
+   an un-dimmed light basemap would be a jarring white rectangle against the
+   dark UI, so it's dimmed to sit naturally in that context instead. */
+body:not(.light-mode) .leaflet-tile-pane {
   filter: brightness(0.65) contrast(1.2) saturate(0.6);
 }
 
@@ -965,6 +981,17 @@ a {
 
   .dashboard-grid {
     grid-template-columns: 1fr;
+    grid-template-rows: none;
+    flex: none;
+  }
+
+  .leaflet-map {
+    flex: none;
+    height: 480px;
+  }
+
+  .drones-panel {
+    max-height: 600px;
   }
 
   .analytics-grid {
@@ -1380,7 +1407,11 @@ a {
 
 /* ===== Notifications ===== */
 .notification-wrapper {
-  position: relative;
+  /* No position:relative here on purpose — the dropdown below needs to
+     align to the navbar's own right edge, not this wrapper's (which sits
+     to the left of the settings button and would leave the dropdown short
+     of the true edge). .navbar's position:sticky already serves as the
+     positioning context for the dropdown's position:absolute. */
 }
 
 .notification-badge {

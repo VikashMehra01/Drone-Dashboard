@@ -115,13 +115,10 @@ export default function DroneFeed() {
 
     return (
         <>
-            <h2 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '20px' }}>
-                Live Drone Feeds
-            </h2>
             {drones.length === 0 && (
                 <div className="feed-card" style={{ padding: 16, marginBottom: 16 }}>
                     No active live streams found. Start the stream processor to publish live data.
-                    {!debugPlayback && (
+                    {import.meta.env.DEV && !debugPlayback && (
                         <span style={{ display: 'block', marginTop: 8, color: 'var(--color-text-secondary)' }}>
                             For quick UI debugging, open this page with <strong>?debugPlayback=1</strong>.
                         </span>

@@ -9,6 +9,7 @@ const pageTitles = {
     '/': 'Command Center',
     '/feeds': 'Live Drone Feeds',
     '/analytics': 'Analytics & Reports',
+    '/about': 'About',
 }
 
 export default function Navbar() {
@@ -136,7 +137,7 @@ export default function Navbar() {
                         <Settings size={18} />
                     </button>
                     {isSettingsOpen && (
-                        <div className="notification-dropdown settings-dropdown" style={{ width: '250px' }}>
+                        <div className="notification-dropdown settings-dropdown">
                             <div className="notification-header">
                                 <h3>Settings</h3>
                             </div>

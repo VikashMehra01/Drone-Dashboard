@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -159,12 +160,24 @@ async def me(current_user: dict = Depends(get_current_user)):
 # User management (admin only)
 # ---------------------------------------------------------------------------
 
+def _epoch_to_iso(value) -> str | None:
+    """DB timestamps are stored as raw Unix-epoch seconds (REAL). Convert to
+    ISO 8601 before sending to the frontend — JS's `new Date(x)` parses ISO
+    strings correctly but not a bare epoch-seconds string (it isn't
+    milliseconds, and isn't a recognized date format either), which was
+    rendering as "Invalid Date" in the admin Users table.
+    """
+    if not value:
+        return None
+    return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
+
+
 @router.get("/users")
 async def list_users(_admin: dict = Depends(require_admin)):
     users = _list_users()
     return [
         {"id": u.get("id"), "username": u["username"], "role": u["role"],
-         "created_at": str(u.get("created_at", ""))}
+         "created_at": _epoch_to_iso(u.get("created_at"))}
         for u in users
     ]
 

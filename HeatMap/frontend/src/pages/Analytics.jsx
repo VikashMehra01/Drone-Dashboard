@@ -193,9 +193,6 @@ export default function Analytics() {
 
     return (
         <>
-            <h2 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '20px' }}>
-                Analytics & Reports
-            </h2>
             <div className="analytics-grid">
                 {/* Density Over Time */}
                 <div className="chart-card full-width" id="density-timeline-chart">
@@ -294,6 +291,9 @@ export default function Analytics() {
                     <div className="chart-title">Crowd Distribution</div>
                     <div className="chart-subtitle">Percentage share across active zones</div>
                     <div className="chart-container">
+                        {pieData.length === 0 ? (
+                            <div className="chart-empty-state">No active crowd data yet.</div>
+                        ) : null}
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
                                 <Pie
