@@ -1,12 +1,21 @@
-import { useEffect, useRef, useState, useMemo } from 'react'
-import { MapContainer, TileLayer, Circle, Popup, useMap, Marker, FeatureGroup } from 'react-leaflet'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
+import Map, { Source, Layer, Marker, Popup, NavigationControl } from 'react-map-gl/maplibre'
+import 'maplibre-gl/dist/maplibre-gl.css'
 import { X, Video, BarChart3, SlidersHorizontal, Radio, RotateCcw } from 'lucide-react'
 import { useNotification } from '../context/NotificationContext'
 import { useSettings } from '../context/SettingsContext'
 import { useDrones } from '../context/DronesContext'
 import HlsPlayer from './HlsPlayer'
+
+// OpenFreeMap — free, no API key, no signup. "positron" mirrors the plain
+// light basemap this app always used; "dark" is a real dark cartographic
+// style, replacing the old approach of CSS-filtering a light basemap.
+const MAP_STYLES = {
+  light: 'https://tiles.openfreemap.org/styles/positron',
+  dark: 'https://tiles.openfreemap.org/styles/dark',
+}
+
+const INDIA_OVERVIEW = { longitude: 80.0, latitude: 22.5, zoom: 5 }
 
 /**
  * Returns true for protocols browsers cannot play natively (RTSP, RTMP …).
@@ -34,14 +43,6 @@ function isHlsUrl(url) {
         return url.toLowerCase().includes('.m3u8')
     }
 }
-
-// Fix default marker icon
-delete L.Icon.Default.prototype._getIconUrl
-L.Icon.Default.mergeOptions({
-    iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-    iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-})
 
 // ─── Color interpolation based on intensity ───────────
 function getHeatColor(value, maxIntensity) {
@@ -99,100 +100,24 @@ function getVideoNameFromUrl(url) {
     }
 }
 
-// ─── Heatmap Layer ────────────────────────────────────
-function HeatmapLayer({ data }) {
-    const map = useMap()
-    const heatLayerRef = useRef(null)
-    const isMountedRef = useRef(true)
-
-    useEffect(() => {
-        isMountedRef.current = true
-        return () => {
-            isMountedRef.current = false
-        }
-    }, [])
-
-    useEffect(() => {
-        import('leaflet.heat').then(() => {
-            if (!isMountedRef.current || heatLayerRef.current) return
-
-            heatLayerRef.current = L.heatLayer([], {
-                radius: 35,
-                blur: 25,
-                maxZoom: 17,
-                max: 1.0,
-                gradient: {
-                    0.1: '#1a237e',
-                    0.2: '#283593',
-                    0.3: '#1565c0',
-                    0.4: '#0288d1',
-                    0.5: '#00acc1',
-                    0.6: '#4caf50',
-                    0.7: '#8bc34a',
-                    0.8: '#ffeb3b',
-                    0.9: '#ff9800',
-                    1.0: '#f44336',
-                },
-            }).addTo(map)
-
-            const heatContainer = heatLayerRef.current.getContainer?.()
-            if (heatContainer) {
-                // Let map interactions pass through heat layer canvas.
-                heatContainer.style.pointerEvents = 'none'
-            }
-
-            if (heatLayerRef.current._map) {
-                heatLayerRef.current.setLatLngs(data)
-                heatLayerRef.current.redraw()
-            }
-        })
-    }, [map])
-
-    useEffect(() => {
-        if (!heatLayerRef.current) return
-        if (heatLayerRef.current._map) {
-            heatLayerRef.current.setLatLngs(data)
-            heatLayerRef.current.redraw()
-        }
-    }, [data])
-
-
-
-    useEffect(() => {
-        return () => {
-            if (!heatLayerRef.current) return
-            map.removeLayer(heatLayerRef.current)
-            heatLayerRef.current = null
-        }
-    }, [map])
-
-    return null
-}
-
-function MapFocusController({ targetDrone, focusRequestId, circleRefs }) {
-    const map = useMap()
-
-    useEffect(() => {
-        if (!targetDrone?.id || focusRequestId <= 0) return
-
-        const lat = Number(targetDrone.latitude)
-        const lng = Number(targetDrone.longitude)
-        if (Number.isNaN(lat) || Number.isNaN(lng)) return
-
-        map.flyTo([lat, lng], Math.max(map.getZoom(), 15), { duration: 0.9 })
-
-        if (circleRefs?.current?.[targetDrone.id]) {
-            setTimeout(() => {
-                map.closePopup()
-                const circle = circleRefs.current[targetDrone.id]
-                if (circle && circle.openPopup) {
-                    circle.openPopup()
-                }
-            }, 300) // Small delay to let panning start
-        }
-    }, [map, focusRequestId, targetDrone?.id, targetDrone?.latitude, targetDrone?.longitude, circleRefs])
-
-    return null
+/**
+ * Builds a geodesic circle polygon (GeoJSON ring, [lng, lat] pairs) around
+ * a center point — MapLibre has no built-in "circle sized in meters"
+ * primitive like Leaflet's L.circle, so this fills that gap with the same
+ * flat-earth approximation the heatmap footprint math already used.
+ */
+function makeGeoCircleRing(lat, lng, radiusMeters, numPoints = 64) {
+    const latRad = (lat * Math.PI) / 180
+    const metersPerDegLat = 111320
+    const metersPerDegLng = 111320 * Math.max(0.2, Math.cos(latRad))
+    const ring = []
+    for (let i = 0; i <= numPoints; i++) {
+        const angle = (i / numPoints) * 2 * Math.PI
+        const dLat = (radiusMeters * Math.cos(angle)) / metersPerDegLat
+        const dLng = (radiusMeters * Math.sin(angle)) / metersPerDegLng
+        ring.push([lng + dLng, lat + dLat])
+    }
+    return ring
 }
 
 // ─── Geocode a region name via Nominatim search ──────────────────────────────
@@ -206,63 +131,31 @@ async function geocodeRegion(query) {
         const data = await res.json()
         if (!data.length) return null
         const { boundingbox } = data[0]
-        // boundingbox: [minLat, maxLat, minLng, maxLng]
+        // Nominatim boundingbox: [minLat, maxLat, minLng, maxLng].
+        // MapLibre fitBounds wants [[west,south],[east,north]] — lng,lat order.
         return [
-            [Number(boundingbox[0]), Number(boundingbox[2])],
-            [Number(boundingbox[1]), Number(boundingbox[3])],
+            [Number(boundingbox[2]), Number(boundingbox[0])],
+            [Number(boundingbox[3]), Number(boundingbox[1])],
         ]
     } catch {
         return null
     }
 }
 
-/**
- * Watches filterState / filterDistrict and flies the map to the matched region.
- * District takes priority; falls back to state; clears to India view when both reset.
- */
-function MapRegionController({ filterState, filterDistrict }) {
-    const map = useMap()
-
-    useEffect(() => {
-        // Determine what to geocode: district > state > nothing
-        const query = filterDistrict !== 'all'
-            ? `${filterDistrict}${filterState !== 'all' ? ', ' + filterState : ''}`
-            : filterState !== 'all'
-                ? filterState
-                : null
-
-        if (!query) {
-            // Both cleared — reset to India overview
-            map.flyTo([22.5, 80.0], 5, { duration: 1.2 })
-            return
-        }
-
-        let cancelled = false
-        geocodeRegion(query).then(bounds => {
-            if (cancelled || !bounds) return
-            map.flyToBounds(bounds, { padding: [40, 40], maxZoom: filterDistrict !== 'all' ? 13 : 8, duration: 1.2 })
-        })
-
-        return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [filterState, filterDistrict])
-
-    return null
-}
-
-/**
- * Watches resetTrigger and flies the map back to the full India overview.
- */
-function MapResetController({ resetTrigger }) {
-    const map = useMap()
-
-    useEffect(() => {
-        if (resetTrigger <= 0) return
-        map.flyTo([22.5, 80.0], 5, { duration: 1.2 })
-        map.closePopup()
-    }, [map, resetTrigger])
-
-    return null
+const HEATMAP_PAINT = {
+    'heatmap-weight': ['interpolate', ['linear'], ['get', 'weight'], 0, 0, 1, 1],
+    'heatmap-intensity': 1,
+    'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 5, 15, 11, 35, 15, 70],
+    'heatmap-opacity': 0.75,
+    'heatmap-color': [
+        'interpolate', ['linear'], ['heatmap-density'],
+        0, 'rgba(0,0,0,0)',
+        0.2, '#1a237e',
+        0.4, '#1565c0',
+        0.6, '#4caf50',
+        0.8, '#ffeb3b',
+        1, '#f44336',
+    ],
 }
 
 export default function MapView({
@@ -279,24 +172,25 @@ export default function MapView({
 }) {
     const { processStreamData } = useNotification()
     const { showLivePanelInfo, theme } = useSettings()
-    const defaultCenter = [28.5900, 77.2200]
+    const defaultCenter = { latitude: 28.5900, longitude: 77.2200 }
     const detailsPanelRef = useRef(null)
     const dragOffsetRef = useRef({ x: 0, y: 0 })
-    const circleRefs = useRef({})
+    const mapRef = useRef(null)
     const { drones, currentDensity } = useDrones()
     const activeDrones = drones.filter((d) => d.status === 'active' || d.status === 'debug')
     const center = activeDrones.length > 0
-        ? [Number(activeDrones[0].latitude || defaultCenter[0]), Number(activeDrones[0].longitude || defaultCenter[1])]
+        ? { latitude: Number(activeDrones[0].latitude || defaultCenter.latitude), longitude: Number(activeDrones[0].longitude || defaultCenter.longitude) }
         : defaultCenter
 
     // ── Reset trigger: increment to fly back to India overview ────────────────
     const [resetTrigger, setResetTrigger] = useState(0)
     const [showMarkers, setShowMarkers] = useState(false)
+    const [popupDroneId, setPopupDroneId] = useState(null)
 
     // Refs for intervals to prevent stale closures
     const dronesRef = useRef(drones)
     const maxIntensityRef = useRef(maxIntensityByDrone)
-    
+
     useEffect(() => {
         dronesRef.current = drones
         maxIntensityRef.current = maxIntensityByDrone
@@ -312,9 +206,11 @@ export default function MapView({
         () => drones.find((d) => d.id === focusedDroneId) || null,
         [drones, focusedDroneId]
     )
-    // User requested the map to always use the light theme tiles
-    const tileTheme = 'light_all'
-    const mapTileUrl = `https://{s}.basemaps.cartocdn.com/${tileTheme}/{z}/{x}/{y}{r}.png`
+    const popupDrone = useMemo(
+        () => activeDrones.find((d) => d.id === popupDroneId) || null,
+        [activeDrones, popupDroneId]
+    )
+    const mapStyleUrl = MAP_STYLES[theme === 'light' ? 'light' : 'dark']
 
     // drones and currentDensity both come from the shared DronesContext poll
     // (one /api/drones/ + /api/density/current fetch per second, shared with
@@ -354,7 +250,6 @@ export default function MapView({
         if (!isPlaying) return;
 
         frameCounterRef.current += 1;
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         setStreamMetricsByVideo(densityDerived.byVideo)
         setLoopVideo(densityDerived.loopVideo);
         setLiveData({
@@ -421,62 +316,112 @@ export default function MapView({
     const settingsDrone = selectedDrone || focusedDrone || activeDrones[0] || null
     const settingsDroneLimit = settingsDrone ? getDroneMaxIntensity(settingsDrone) : 100
 
-    // Generate dynamic heatmap data based on the current frame density
-    const dynamicHeatmapData = useMemo(() => {
-        if (!frameData.headcount_density) return [];
+    // Per-drone metrics used by both the footprint circles and the heatmap
+    // source below — computed once so the two stay visually consistent.
+    const droneVisuals = useMemo(() => {
+        return activeDrones.map((drone) => {
+            const metrics = streamMetricsByVideo[getVideoNameFromUrl(drone.video_url)]
+            const headcount = Number(metrics?.headcount ?? drone.headcountDensity ?? 0)
+            const droneMaxIntensity = getDroneMaxIntensity(drone)
+            const color = getHeatColor(headcount, droneMaxIntensity)
+            const densityLabel = getDensityLabel(headcount, droneMaxIntensity)
+            const viewAngleDeg = getDroneViewAngle(drone)
+            const footprintRadiusMeters = getDroneFootprintRadiusMeters(drone)
+            const intensity = Math.min(headcount / droneMaxIntensity, 1.0)
+            return { drone, headcount, color, densityLabel, viewAngleDeg, footprintRadiusMeters, intensity }
+        })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeDrones, streamMetricsByVideo, maxIntensityByDrone])
 
-        const points = [];
-        
-        activeDrones.forEach(liveDrone => {
-            if (liveDrone.status !== 'active' && liveDrone.status !== 'debug') return;
-            
-            const metrics = streamMetricsByVideo[getVideoNameFromUrl(liveDrone.video_url)]
-            const streamHeadcount = Number(metrics?.headcount ?? liveDrone.headcountDensity ?? 0)
-            if (streamHeadcount <= 0) return
+    // Native MapLibre heatmap layer — one weighted point per drone, radius
+    // scaled by zoom. Replaces the old manual point-spreading hack (spiral of
+    // synthetic points around each drone) that leaflet.heat needed; MapLibre's
+    // GPU heatmap shader does that spreading itself from a single point.
+    const heatmapGeoJSON = useMemo(() => ({
+        type: 'FeatureCollection',
+        features: droneVisuals
+            .filter((v) => v.headcount > 0)
+            .map((v) => ({
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [Number(v.drone.longitude), Number(v.drone.latitude)] },
+                properties: { weight: v.intensity },
+            })),
+    }), [droneVisuals])
 
-            const baseLat = Number(liveDrone.latitude || center[0]);
-            const baseLng = Number(liveDrone.longitude || center[1]);
-            const footprintRadiusMeters = getDroneFootprintRadiusMeters(liveDrone)
-            const droneMaxIntensity = getDroneMaxIntensity(liveDrone)
-            const intensity = Math.min(streamHeadcount / droneMaxIntensity, 1.0)
-            const latRad = (baseLat * Math.PI) / 180
-            const metersPerDegLat = 111320
-            const metersPerDegLng = 111320 * Math.max(0.2, Math.cos(latRad))
+    const droneLayerIds = useMemo(() => droneVisuals.map((v) => `drone-circle-${v.drone.id}`), [droneVisuals])
 
-            points.push([baseLat, baseLng, intensity]);
-
-            // Deterministic footprint points inside the drone coverage circle.
-            // This avoids jitter and keeps the heatmap stable when the drone is still.
-            const spreadCount = Math.max(10, Math.floor(intensity * 22));
-            const goldenAngle = Math.PI * (3 - Math.sqrt(5))
-
-            for (let i = 0; i < spreadCount; i++) {
-                const t = (i + 1) / spreadCount
-                const radiusMeters = footprintRadiusMeters * Math.sqrt(t)
-                const angle = i * goldenAngle
-
-                const northMeters = radiusMeters * Math.cos(angle)
-                const eastMeters = radiusMeters * Math.sin(angle)
-
-                const latOffset = northMeters / metersPerDegLat
-                const lngOffset = eastMeters / metersPerDegLng
-
-                points.push([
-                    baseLat + latOffset,
-                    baseLng + lngOffset,
-                    Math.max(0.08, intensity * (1 - t * 0.7))
-                ]);
-            }
-        });
-        
-        return points;
-    }, [frameData.headcount_density, activeDrones, center, streamMetricsByVideo, maxIntensityByDrone]);
+    const focusOnDrone = useCallback((drone, { openPopup = true } = {}) => {
+        if (!drone) return
+        const lat = Number(drone.latitude)
+        const lng = Number(drone.longitude)
+        if (Number.isNaN(lat) || Number.isNaN(lng)) return
+        const map = mapRef.current
+        if (map) {
+            map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15), duration: 900 })
+        }
+        if (openPopup) {
+            setTimeout(() => setPopupDroneId(drone.id), 300)
+        }
+    }, [])
 
     const handleDroneClick = (drone) => {
         setSelectedDrone(drone)
         setFocusedDroneId(drone.id)
         setFocusRequestId(prev => prev + 1)
     }
+
+    // ── Focus-on-drone (triggered by focusRequestId, e.g. clicking a Fleet
+    // Status card) ──────────────────────────────────────────────────────────
+    useEffect(() => {
+        if (!focusedDrone?.id || focusRequestId <= 0) return
+        focusOnDrone(focusedDrone)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [focusRequestId, focusedDrone?.id, focusedDrone?.latitude, focusedDrone?.longitude])
+
+    // ── Region filter (state/district dropdowns) — geocode + fly to bounds ───
+    useEffect(() => {
+        const query = filterDistrict !== 'all'
+            ? `${filterDistrict}${filterState !== 'all' ? ', ' + filterState : ''}`
+            : filterState !== 'all'
+                ? filterState
+                : null
+
+        const map = mapRef.current
+        if (!map) return
+
+        if (!query) {
+            map.flyTo({ center: [INDIA_OVERVIEW.longitude, INDIA_OVERVIEW.latitude], zoom: INDIA_OVERVIEW.zoom, duration: 1200 })
+            return
+        }
+
+        let cancelled = false
+        geocodeRegion(query).then((bounds) => {
+            if (cancelled || !bounds) return
+            map.fitBounds(bounds, { padding: 40, maxZoom: filterDistrict !== 'all' ? 13 : 8, duration: 1200 })
+        })
+
+        return () => { cancelled = true }
+    }, [filterState, filterDistrict])
+
+    // ── Reset view ────────────────────────────────────────────────────────────
+    useEffect(() => {
+        if (resetTrigger <= 0) return
+        const map = mapRef.current
+        if (!map) return
+        map.flyTo({ center: [INDIA_OVERVIEW.longitude, INDIA_OVERVIEW.latitude], zoom: INDIA_OVERVIEW.zoom, duration: 1200 })
+        setPopupDroneId(null)
+    }, [resetTrigger])
+
+    const onMapClick = useCallback((event) => {
+        const feature = event.features?.[0]
+        if (!feature) return
+        const droneId = feature.properties?.droneId
+        const visual = droneVisuals.find((v) => v.drone.id === droneId)
+        if (!visual) return
+        handleDroneClick(visual.drone)
+        focusOnDrone(visual.drone)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [droneVisuals, focusOnDrone])
 
     return (
         <div className="map-container">
@@ -501,8 +446,8 @@ export default function MapView({
                         <RotateCcw size={13} />
                         Reset View
                     </button>
-                    <button 
-                        className={`map-control-btn ${showMarkers ? 'active' : ''}`} 
+                    <button
+                        className={`map-control-btn ${showMarkers ? 'active' : ''}`}
                         id="markers-toggle"
                         onClick={() => setShowMarkers(m => !m)}
                     >
@@ -511,100 +456,107 @@ export default function MapView({
                 </div>
             </div>
 
-            <MapContainer
-                center={center}
-                zoom={12}
-                className="leaflet-map"
-                zoomControl={true}
-                preferCanvas={true}
+            {/*
+              react-map-gl's `className` prop does NOT merge with MapLibre's
+              own internal "maplibregl-map" class on the root div (it gets
+              silently dropped), so `.maplibre-map`'s CSS never matched when
+              applied directly on <Map>. This wrapper div is what actually
+              carries the sizing class instead; <Map> just fills it via 100%.
+            */}
+            <div className="maplibre-map">
+            <Map
+                ref={mapRef}
+                initialViewState={{ longitude: center.longitude, latitude: center.latitude, zoom: 12 }}
+                mapStyle={mapStyleUrl}
+                interactiveLayerIds={droneLayerIds}
+                onClick={onMapClick}
                 maxZoom={18}
+                style={{ width: '100%', height: '100%' }}
+                cursor={droneLayerIds.length ? 'pointer' : 'grab'}
             >
-                <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-                    url={mapTileUrl}
-                />
-                <MapFocusController targetDrone={focusedDrone} focusRequestId={focusRequestId} circleRefs={circleRefs} />
-                <MapRegionController filterState={filterState} filterDistrict={filterDistrict} />
-                <MapResetController resetTrigger={resetTrigger} />
-                <HeatmapLayer data={dynamicHeatmapData} />
-                {activeDrones.map((drone) => {
-                    const isLiveDrone = drone.status === 'active' || drone.status === 'debug'
-                    const metrics = streamMetricsByVideo[getVideoNameFromUrl(drone.video_url)]
-                    const headcount = isLiveDrone ? Number(metrics?.headcount ?? drone.headcountDensity ?? 0) : drone.peopleCounted
-                    const droneMaxIntensity = getDroneMaxIntensity(drone)
-                    const color = getHeatColor(headcount, droneMaxIntensity)
-                    const densityLabel = getDensityLabel(headcount, droneMaxIntensity)
+                <NavigationControl position="top-left" showCompass={false} />
 
-                    // Ground footprint for vertical camera view:
-                    // radius = altitude * tan(FOV/2)
-                    // altitude in meters, FOV in degrees.
-                    const viewAngleDeg = getDroneViewAngle(drone)
-                    const footprintRadiusMeters = getDroneFootprintRadiusMeters(drone)
+                {heatmapGeoJSON.features.length > 0 && (
+                    <Source id="crowd-heatmap" type="geojson" data={heatmapGeoJSON}>
+                        <Layer id="crowd-heatmap-layer" type="heatmap" paint={HEATMAP_PAINT} />
+                    </Source>
+                )}
 
-                    const circleElement = (
-                        <Circle
-                            key={drone.id}
-                            ref={(r) => {
-                                if (r) {
-                                    circleRefs.current[drone.id] = r
-                                }
-                            }}
-                            center={[drone.latitude, drone.longitude]}
-                            radius={footprintRadiusMeters}
-                            pathOptions={{
-                                fillColor: color,
-                                fillOpacity: 0.28,
-                                stroke: false,
-                            }}
-                            eventHandlers={{
-                                click: () => handleDroneClick(drone),
-                            }}
-                        >
-                            <Popup>
-                                <div style={{ color: 'var(--color-text-primary)', fontSize: '13px', lineHeight: 1.6 }}>
-                                    <strong>{drone.name}</strong> ({drone.id})<br />
-                                    Zone: {drone.zone || 'Live Stream Zone'}<br />
-                                    Altitude: {drone.altitude ?? 100}m<br />
-                                    View Angle: {viewAngleDeg}°<br />
-                                    Coverage Radius: {Math.round(footprintRadiusMeters)}m<br />
-                                    People: {Math.round(headcount || 0)}<br />
-                                    Crowd Level: <strong style={{ color }}>{densityLabel}</strong><br />
-                                    Battery: {drone.battery ?? 100}%
-                                </div>
-                            </Popup>
-                        </Circle>
-                    )
-
+                {droneVisuals.map(({ drone, color, footprintRadiusMeters }) => {
+                    const lat = Number(drone.latitude)
+                    const lng = Number(drone.longitude)
+                    if (Number.isNaN(lat) || Number.isNaN(lng)) return null
+                    const ring = makeGeoCircleRing(lat, lng, footprintRadiusMeters)
+                    const geojson = {
+                        type: 'Feature',
+                        properties: { droneId: drone.id },
+                        geometry: { type: 'Polygon', coordinates: [ring] },
+                    }
                     return (
-                        <FeatureGroup key={`container-${drone.id}`}>
-                            {circleElement}
-                            {showMarkers && (
-                                <Marker 
-                                    position={[drone.latitude, drone.longitude]}
-                                    icon={L.divIcon({
-                                        className: 'custom-colored-marker',
-                                        html: `<div style="background-color: ${color}; width: 16px; height: 16px; border-radius: 50%; border: 2px solid #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.5);"></div>`,
-                                        iconSize: [16, 16],
-                                        iconAnchor: [8, 8]
-                                    })}
-                                    eventHandlers={{
-                                        click: () => handleDroneClick(drone),
-                                    }}
-                                >
-                                    <Popup>
-                                        <div style={{ color: 'var(--color-text-primary)', fontSize: '13px', lineHeight: 1.6 }}>
-                                            <strong>{drone.name}</strong> ({drone.id})<br />
-                                            Zone: {drone.zone || 'Live Stream Zone'}<br />
-                                            People: {Math.round(headcount || 0)}<br />
-                                            Crowd Level: <strong style={{ color }}>{densityLabel}</strong>
-                                        </div>
-                                    </Popup>
-                                </Marker>
-                            )}
-                        </FeatureGroup>
+                        <Source key={drone.id} id={`drone-circle-src-${drone.id}`} type="geojson" data={geojson}>
+                            <Layer
+                                id={`drone-circle-${drone.id}`}
+                                type="fill"
+                                paint={{ 'fill-color': color, 'fill-opacity': 0.28 }}
+                            />
+                        </Source>
                     )
                 })}
-            </MapContainer>
+
+                {showMarkers && droneVisuals.map(({ drone, color }) => {
+                    const lat = Number(drone.latitude)
+                    const lng = Number(drone.longitude)
+                    if (Number.isNaN(lat) || Number.isNaN(lng)) return null
+                    return (
+                        <Marker
+                            key={drone.id}
+                            longitude={lng}
+                            latitude={lat}
+                            onClick={(e) => {
+                                e.originalEvent.stopPropagation()
+                                handleDroneClick(drone)
+                                focusOnDrone(drone)
+                            }}
+                        >
+                            <div
+                                className="custom-colored-marker"
+                                style={{
+                                    background: color, width: 16, height: 16, borderRadius: '50%',
+                                    border: '2px solid #ffffff', boxShadow: '0 2px 4px rgba(0,0,0,0.5)', cursor: 'pointer',
+                                }}
+                            />
+                        </Marker>
+                    )
+                })}
+
+                {popupDrone && (() => {
+                    const visual = droneVisuals.find((v) => v.drone.id === popupDrone.id)
+                    if (!visual) return null
+                    const { color, densityLabel, headcount, footprintRadiusMeters, viewAngleDeg } = visual
+                    return (
+                        <Popup
+                            longitude={Number(popupDrone.longitude)}
+                            latitude={Number(popupDrone.latitude)}
+                            onClose={() => setPopupDroneId(null)}
+                            closeButton
+                            closeOnClick={false}
+                            anchor="bottom"
+                        >
+                            <div style={{ color: 'var(--color-text-primary)', fontSize: '13px', lineHeight: 1.6 }}>
+                                <strong>{popupDrone.name}</strong> ({popupDrone.id})<br />
+                                Zone: {popupDrone.zone || 'Live Stream Zone'}<br />
+                                Altitude: {popupDrone.altitude ?? 100}m<br />
+                                View Angle: {viewAngleDeg}°<br />
+                                Coverage Radius: {Math.round(footprintRadiusMeters)}m<br />
+                                People: {Math.round(headcount || 0)}<br />
+                                Crowd Level: <strong style={{ color }}>{densityLabel}</strong><br />
+                                Battery: {popupDrone.battery ?? 100}%
+                            </div>
+                        </Popup>
+                    )
+                })()}
+            </Map>
+            </div>
 
             {/* ─── Playback Controls ─── */}
             {/* ─── Live Data Badge ─── */}
@@ -623,7 +575,7 @@ export default function MapView({
                     style={{ left: `${detailsPanelPosition.x}px`, top: `${detailsPanelPosition.y}px` }}
                 >
                     <div className="drone-feed-modal">
-                        <div 
+                        <div
                             className="drone-feed-modal-header"
                             style={{ cursor: 'move', userSelect: 'none' }}
                             onMouseDown={startDraggingDetails}
@@ -771,7 +723,7 @@ export default function MapView({
                                             <div><strong style={{ color: 'var(--color-text-secondary)' }}>People:</strong> {Number(selectedDroneMetrics?.headcount ?? selectedDrone.headcountDensity ?? 0).toFixed(0)}</div>
                                             <div>
                                                 <strong style={{ color: 'var(--color-text-secondary)' }}>Crowd Level:</strong>{' '}
-                                                <span style={{ 
+                                                <span style={{
                                                     color: getHeatColor(
                                                         Number(selectedDroneMetrics?.headcount ?? selectedDrone.headcountDensity ?? 0),
                                                         getDroneMaxIntensity(selectedDrone)
