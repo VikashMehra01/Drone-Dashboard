@@ -13,7 +13,7 @@
 ### ✨ Key Features
 
 - **Multi-Protocol Video Ingestion**: RTSP, RTMP, HTTP MJPEG, or simulated streams from local `.mp4` files.
-- **AI-Powered Crowd Density**: Deep-learning density-map estimation (**SDNet**, from the vendored [`crowd_models`](crowd_models) research repo) or classic **YOLOv8** person detection, both running via PyTorch.
+- **AI-Powered Crowd Density**: Deep-learning density-map estimation (**SDNet**, from the vendored [`crowd_models`](crowd_models) research repo) or classic **YOLOv8** person detection (COCO-pretrained, or a VisDrone-pretrained variant tuned for aerial/drone-camera footage), both running via PyTorch. The available models are admin-configurable in one place ([`stream_config.py`](cv_pipeline/stream_config.py)'s `MODEL_PRESETS`) and exposed to the dashboard via `GET /api/auth/models`.
 - **Dynamic Heatmaps & Telemetry**: Live drone coordinates, altitude, battery, and geospatial crowd heatmaps rendered on a Leaflet map.
 - **Zero-Setup Backend**: FastAPI backed by a single local SQLite file — no external database server or Docker container required.
 - **Telegram Alert Integration**: Automatic push notifications when a drone's sustained headcount crosses a configurable threshold.
@@ -37,7 +37,7 @@ Video Source                  cv_pipeline/                        backend/ (Fast
                                                                              ▼
                                                                   SQLite (backend/skywatch.db)
                                                                              │
-                                                                             │ REST, polled every ~5s
+                                                                             │ REST, polled every 1s
                                                                              ▼
                                                                   frontend/ (React + Vite)
                                                                   Dashboard · MapView (Leaflet heatmap)
@@ -46,16 +46,16 @@ Video Source                  cv_pipeline/                        backend/ (Fast
 
 ### Components
 
-1. **`cv_pipeline/`** — the CV worker. `stream_processor.py` opens a video source with OpenCV, runs every frame through a pluggable `PersonDetector` (SDNet or YOLO), and HTTP-POSTs `{headcount, points_count, timestamp, drone_id, lat/lon/alt, zone, loop_video}` to the backend. One process per drone; the backend admin API spawns these as detached subprocesses (`--drone-id`, `--source`, `--model`, `--device`, …).
+1. **`cv_pipeline/`** — the CV worker. `stream_processor.py` opens a video source with OpenCV, runs every frame through a pluggable `PersonDetector` (SDNet or YOLO), and HTTP-POSTs `{headcount, points_count, timestamp, drone_id, lat/lon/alt, zone, loop_video}` to the backend. One process per drone; the backend admin API spawns these as detached subprocesses (`--drone-id`, `--source`, `--model`, `--device`, …). PyTorch/OpenCV are capped to a small CPU thread pool per process (`--threads`, default 2 — see `DEFAULT_NUM_THREADS` in `stream_config.py`), since left uncapped a single inference call otherwise claims every logical core on the machine.
 
 2. **`backend/`** — the API + state layer (FastAPI). It:
    - Accepts density updates from every running `stream_processor.py` and keeps an in-memory map of active streams (`active_streams`), keyed by source URL.
    - Persists a sampled subset of points to `density_records` / `drones` tables in a local SQLite file (`backend/skywatch.db`), via `app/db.py`.
-   - Serves `/api/drones` (merges live streams + saved-but-stopped configs + idle drones), `/api/density/current` and `/api/density/history` (bucketed time-series for the Analytics page), `/api/alerts/broadcast` (Telegram), and `/api/auth/*` (JWT login + admin user/drone management).
-   - `/api/auth/drones/launch|stop|resume` lets an admin manage `stream_processor.py` subprocesses from the UI — it shells out to spawn/kill the Python process and tracks PID files + an in-memory registry (`drone_registry.py`) alongside the persisted `drone_configs` table.
+   - Serves `/api/drones` (merges live streams + saved-but-stopped configs + idle drones), `/api/density/current` and `/api/density/history` (bucketed time-series for the Analytics page), `/api/alerts/broadcast` (Telegram), `/api/auth/*` (JWT login + admin user/drone management), and `/api/auth/models` (the admin-configurable detection-model list, sourced from `cv_pipeline/stream_config.py`).
+   - `/api/auth/drones/launch|stop|resume` lets an admin manage `stream_processor.py` subprocesses from the UI — it shells out to spawn/kill the Python process and tracks liveness via the `pid`/`status` columns on the persisted `drone_configs` table (checked with `psutil` through `drone_registry.py`), which is the single source of truth — no PID files or separate in-memory registry to drift out of sync.
    - Serves local demo videos as static files under `/videos` (from `media/videos/`).
 
-3. **`frontend/`** — the dashboard (React + Vite). Polls `/api/drones/` and `/api/density/current` on ~5s intervals, plots drones on a Leaflet map with a heatmap overlay (`leaflet.heat`), plays each drone's feed (HLS via `hls.js` for live RTSP-derived streams, native `<video>` for local files), reverse-geocodes drone coordinates to Indian state/district via Nominatim for filtering, and raises in-app + Telegram alerts when a drone's headcount stays above its configured threshold for multiple consecutive frames (`NotificationContext`).
+3. **`frontend/`** — the dashboard (React + Vite). A single shared poll of `/api/drones/` and `/api/density/current` every 1s (`DronesContext`) feeds every component that needs live fleet data — Sidebar, Dashboard, MapView, DensityStats, DroneFeed — instead of each running its own independent interval against the same endpoints. It plots drones on a Leaflet map with a heatmap overlay (`leaflet.heat`), plays each drone's feed (HLS via `hls.js` for live RTSP-derived streams, native `<video>` for local files), reverse-geocodes drone coordinates to Indian state/district via Nominatim for filtering, and raises in-app + Telegram alerts when a drone's headcount stays above its configured threshold for multiple consecutive frames (`NotificationContext`).
 
 4. **`crowd_models/`** — a vendored copy of the official implementation of *"Video Individual Counting for Moving Drones"* (ICCV 2025 Highlight), providing the **SDNet** model architecture and pretrained checkpoint that `sdnet_detector.py` loads for inference. See [Libraries & Attribution](#-libraries--tech-stack) below.
 
@@ -66,10 +66,10 @@ Video Source                  cv_pipeline/                        backend/ (Fast
 1. `stream_processor.py` reads a frame via `cv2.VideoCapture` (local file loop, or auto-reconnecting live URL).
 2. The frame goes to `PersonDetector.detect_people()`, which delegates to:
    - **SDNet** (`sdnet_detector.py`): resizes/normalizes the frame, pairs it with the previous frame (SDNet is a *temporal* shared-density model), runs `Video_Counter.test_forward()`, sums the predicted density map for the headcount, and extracts head positions via local-maxima peak-finding on the density map.
-   - **YOLO** (`yolo_detector.py`): runs Ultralytics YOLOv8n, filters to the `person` class, and returns box-center points.
+   - **YOLO** (`yolo_detector.py`): runs Ultralytics YOLOv8n, filters to the model preset's configured `person_classes` (COCO's single `person` class, or VisDrone's `pedestrian` + `people` classes for the `yolo-visdrone` preset), and returns box-center points.
 3. `stream_processor.py` posts `{headcount, points_count, timestamp, drone_id, lat, lon, alt, zone, loop_video}` to `POST /api/density/update`.
 4. The backend updates `active_streams` in memory (used for “live” polling) and, at most once every `HISTORY_SAMPLE_SECONDS`, persists a point to `density_records` for the Analytics history endpoint.
-5. The frontend polls `/api/drones/` (fleet list + coordinates) and `/api/density/current` (live headcount per drone) every ~5s, updates the Leaflet heatmap/markers, and feeds each drone's rolling headcount into `NotificationContext`, which raises a toast + `/api/alerts/broadcast` → Telegram call if the threshold is sustained.
+5. `DronesContext` polls `/api/drones/` (fleet list + coordinates) and `/api/density/current` (live headcount per drone) every 1s and shares the result with every subscribed component, which update the Leaflet heatmap/markers; each drone's rolling headcount also feeds `NotificationContext`, which raises a toast + `/api/alerts/broadcast` → Telegram call if the threshold is sustained.
 
 ---
 

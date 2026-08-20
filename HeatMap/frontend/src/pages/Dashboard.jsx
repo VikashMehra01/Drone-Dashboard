@@ -170,7 +170,7 @@ export default function Dashboard() {
     }
 
     return (
-        <>
+        <div className="dashboard-page">
             <DensityStats />
             <div className="dashboard-grid">
                 <MapView
@@ -264,6 +264,6 @@ export default function Dashboard() {
                     </div>
                 </div>
             </div>
-        </>
+        </div>
     )
 }
