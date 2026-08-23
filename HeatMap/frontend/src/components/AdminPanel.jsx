@@ -3,10 +3,11 @@ import {
     X, Users, Cpu, Trash2, Key, RefreshCw, ShieldCheck,
     ShieldOff, Loader2, AlertCircle, CheckCircle2,
     MapPin, Activity, ChevronDown, ChevronUp,
-    Square, Play, Search, ArrowUpDown, Edit,
+    Square, Play, Search, ArrowUpDown, Edit, UserPlus, PlusCircle,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useModelOptions } from '../utils/useModelOptions'
+import AddDroneModal from './AddDroneModal'
 
 // MUI
 import Dialog from '@mui/material/Dialog'
@@ -20,6 +21,7 @@ import CircularProgress from '@mui/material/CircularProgress'
 import IconButton from '@mui/material/IconButton'
 import CloseIcon from '@mui/icons-material/Close'
 import KeyIcon from '@mui/icons-material/Key'
+import PersonAddIcon from '@mui/icons-material/PersonAdd'
 import Select from '@mui/material/Select'
 import MenuItem from '@mui/material/MenuItem'
 import FormControl from '@mui/material/FormControl'
@@ -193,14 +195,14 @@ function EditDroneModal({ drone, onClose, authFetch, onSuccess }) {
             </DialogTitle>
             <DialogContent dividers>
                 <form id="edit-drone-form" onSubmit={handleSubmit} style={{ display: 'grid', gap: '16px', gridTemplateColumns: '1fr 1fr', paddingTop: 4 }}>
-                    <TextField label="Name *" name="drone_name" size="small" required
+                    <TextField label="Name" name="drone_name" size="small" required
                         value={formData.drone_name} onChange={handleChange} fullWidth />
-                    <TextField label="Stream URL *" name="source" size="small" required
+                    <TextField label="Stream URL" name="source" size="small" required
                         value={formData.source} onChange={handleChange} fullWidth />
-                    
-                    <TextField label="Latitude *" name="latitude" type="number" inputProps={{ step: "any" }} size="small" required
+
+                    <TextField label="Latitude" name="latitude" type="number" slotProps={{ htmlInput: { step: "any" } }} size="small" required
                         value={formData.latitude} onChange={handleChange} fullWidth />
-                    <TextField label="Longitude *" name="longitude" type="number" inputProps={{ step: "any" }} size="small" required
+                    <TextField label="Longitude" name="longitude" type="number" slotProps={{ htmlInput: { step: "any" } }} size="small" required
                         value={formData.longitude} onChange={handleChange} fullWidth />
                     
                     <TextField label="Altitude (m)" name="altitude" type="number" size="small"
@@ -244,6 +246,77 @@ function EditDroneModal({ drone, onClose, authFetch, onSuccess }) {
     )
 }
 
+// ── Add Member modal ─────────────────────────────────────────────────────────
+// Lives here (not the sidebar) so creating a member sits next to the list it
+// affects — matches "+ Add Drone" living in the Drones tab below.
+function AddMemberModal({ onClose, authFetch, onSuccess }) {
+    const [form, setForm] = useState({ username: '', password: '' })
+    const [loading, setLoading] = useState(false)
+    const [msg, setMsg] = useState(null)
+
+    const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+    const handleSubmit = async (e) => {
+        e.preventDefault()
+        if (!form.username || !form.password) {
+            setMsg({ text: 'Username and password are required.', severity: 'error' }); return
+        }
+        setLoading(true); setMsg(null)
+        try {
+            const res = await authFetch('http://localhost:8000/api/auth/users', {
+                method: 'POST',
+                body: JSON.stringify({ ...form, role: 'member' }),
+            })
+            const data = await res.json()
+            if (!res.ok) { setMsg({ text: data.detail || 'Failed to create user.', severity: 'error' }); return }
+            onSuccess(`User '${form.username}' created.`)
+            onClose()
+        } catch { setMsg({ text: 'Cannot reach server.', severity: 'error' }) }
+        finally { setLoading(false) }
+    }
+
+    return (
+        <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+            <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, pb: 1 }}>
+                <PersonAddIcon fontSize="small" sx={{ color: 'primary.main' }} />
+                Add New Member
+                <IconButton onClick={onClose} sx={{ ml: 'auto' }} size="small">
+                    <CloseIcon fontSize="small" />
+                </IconButton>
+            </DialogTitle>
+
+            <DialogContent dividers>
+                <form id="add-member-form" onSubmit={handleSubmit}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 4 }}>
+                        <TextField
+                            label="Username *" value={form.username} size="small" fullWidth autoFocus
+                            placeholder="e.g. john_doe"
+                            onChange={e => { set('username', e.target.value); setMsg(null) }}
+                        />
+                        <TextField
+                            label="Password *" type="password" value={form.password} size="small" fullWidth
+                            placeholder="Choose a strong password"
+                            onChange={e => { set('password', e.target.value); setMsg(null) }}
+                        />
+                        {msg && <Alert severity={msg.severity} sx={{ py: 0.5 }}>{msg.text}</Alert>}
+                    </div>
+                </form>
+            </DialogContent>
+
+            <DialogActions sx={{ px: 3, py: 2 }}>
+                <Button onClick={onClose} color="inherit" size="small">Cancel</Button>
+                <Button
+                    type="submit" form="add-member-form" variant="contained" size="small"
+                    disabled={loading}
+                    startIcon={loading ? <CircularProgress size={14} color="inherit" /> : <PersonAddIcon />}
+                >
+                    {loading ? 'Creating…' : 'Create Member'}
+                </Button>
+            </DialogActions>
+        </Dialog>
+    )
+}
+
 // ── Users Tab ─────────────────────────────────────────────────────────────────
 const USER_SORTS = [
     { key: 'username_asc',  label: 'Name A→Z' },
@@ -261,6 +334,7 @@ function UsersTab({ authFetch, currentUsername, onToast }) {
     const [query, setQuery] = useState('')
     const [sortKey, setSortKey] = useState('username_asc')
     const [confirmDelete, setConfirmDelete] = useState(null)
+    const [showAddMember, setShowAddMember] = useState(false)
 
     const load = useCallback(async () => {
         setLoading(true)
@@ -310,7 +384,12 @@ function UsersTab({ authFetch, currentUsername, onToast }) {
         <div className="admin-section">
             <div className="admin-section-header">
                 <span>{users.length} user{users.length !== 1 ? 's' : ''}</span>
-                <button className="admin-refresh-btn" onClick={load} title="Refresh"><RefreshCw size={13} /></button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="admin-add-btn" onClick={() => setShowAddMember(true)}>
+                        <UserPlus size={13} /> Add Member
+                    </button>
+                    <button className="admin-refresh-btn" onClick={load} title="Refresh"><RefreshCw size={13} /></button>
+                </div>
             </div>
 
             <div className="admin-filter-row">
@@ -395,6 +474,14 @@ function UsersTab({ authFetch, currentUsername, onToast }) {
                     onClose={() => setConfirmDelete(null)}
                 />
             )}
+
+            {showAddMember && (
+                <AddMemberModal
+                    authFetch={authFetch}
+                    onClose={() => setShowAddMember(false)}
+                    onSuccess={(msg) => { onToast({ text: msg, type: 'success' }); load() }}
+                />
+            )}
         </div>
     )
 }
@@ -409,6 +496,7 @@ function DronesTab({ authFetch, onToast }) {
     const [statusFilter, setStatusFilter] = useState('all')
     const [confirmDelete, setConfirmDelete] = useState(null)
     const [editingDrone, setEditingDrone] = useState(null) // drone_id
+    const [showAddDrone, setShowAddDrone] = useState(false)
 
     const load = useCallback(async () => {
         setLoading(true)
@@ -581,7 +669,12 @@ function DronesTab({ authFetch, onToast }) {
         <div className="admin-section">
             <div className="admin-section-header">
                 <span>{drones.filter(d=>d.status==='active').length} active · {drones.filter(d=>d.status!=='active').length} idle/stopped</span>
-                <button className="admin-refresh-btn" onClick={load} title="Refresh"><RefreshCw size={13} /></button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="admin-add-btn" onClick={() => setShowAddDrone(true)}>
+                        <PlusCircle size={13} /> Add Drone
+                    </button>
+                    <button className="admin-refresh-btn" onClick={load} title="Refresh"><RefreshCw size={13} /></button>
+                </div>
             </div>
 
             <SearchBar value={query} onChange={setQuery} placeholder="Search by name, ID, zone…" />
@@ -635,6 +728,13 @@ function DronesTab({ authFetch, onToast }) {
                     onSuccess={(msg) => { onToast({ text: msg, type: 'success' }); load() }}
                 />
             )}
+
+            <AddDroneModal
+                open={showAddDrone}
+                authFetch={authFetch}
+                onClose={() => setShowAddDrone(false)}
+                onSuccess={(msg) => { onToast({ text: msg, type: 'success' }); load() }}
+            />
         </div>
     )
 }
@@ -670,21 +770,24 @@ export default function AdminPanel({ onClose }) {
                     </button>
                 </div>
 
-                {/* Content */}
+                {/* Content — both tabs stay mounted (hidden via CSS rather
+                    than conditionally rendered) so switching tabs doesn't
+                    unmount+remount them and re-trigger their loading spinner
+                    every time; each fetches its data once and keeps it. */}
                 <div className="admin-panel-body">
-                    {tab === 'users' && (
+                    <div hidden={tab !== 'users'}>
                         <UsersTab
                             authFetch={authFetch}
                             currentUsername={user?.username}
                             onToast={setToast}
                         />
-                    )}
-                    {tab === 'drones' && (
+                    </div>
+                    <div hidden={tab !== 'drones'}>
                         <DronesTab
                             authFetch={authFetch}
                             onToast={setToast}
                         />
-                    )}
+                    </div>
                 </div>
 
                 {toast && <Toast msg={toast} onDone={() => setToast(null)} />}

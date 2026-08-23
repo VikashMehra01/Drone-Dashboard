@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import Map, { Source, Layer, Marker, Popup, NavigationControl } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import { X, Video, BarChart3, SlidersHorizontal, Radio, RotateCcw } from 'lucide-react'
+import { X, Video, BarChart3, SlidersHorizontal, Radio, RotateCcw, Loader2, Minimize2, Maximize2 } from 'lucide-react'
 import { useNotification } from '../context/NotificationContext'
 import { useSettings } from '../context/SettingsContext'
 import { useDrones } from '../context/DronesContext'
@@ -16,6 +16,10 @@ const MAP_STYLES = {
 }
 
 const INDIA_OVERVIEW = { longitude: 80.0, latitude: 22.5, zoom: 5 }
+
+// Matches --navbar-height in index.css — keeps the floating drone-details
+// panel's drag bounds from letting it overlap the sticky navbar.
+const NAVBAR_HEIGHT = 64
 
 /**
  * Returns true for protocols browsers cannot play natively (RTSP, RTMP …).
@@ -163,8 +167,8 @@ export default function MapView({
     focusRequestId = 0,
     maxIntensityByDrone = {},
     setMaxIntensityByDrone = () => {},
-    selectedDrone = null,
-    setSelectedDrone = () => {},
+    selectedDroneId = null,
+    setSelectedDroneId = () => {},
     filterState = 'all',
     filterDistrict = 'all',
     setFocusedDroneId = () => {},
@@ -186,6 +190,11 @@ export default function MapView({
     const [resetTrigger, setResetTrigger] = useState(0)
     const [showMarkers, setShowMarkers] = useState(false)
     const [popupDroneId, setPopupDroneId] = useState(null)
+    // MapLibre needs a network round-trip (style JSON, sprites, glyphs,
+    // vector tiles) before anything is visible — unlike Leaflet's raster
+    // tiles this isn't instant, so show a loading state instead of a blank
+    // box while that's in flight.
+    const [mapLoaded, setMapLoaded] = useState(false)
 
     // Refs for intervals to prevent stale closures
     const dronesRef = useRef(drones)
@@ -202,9 +211,20 @@ export default function MapView({
     const [loopVideo, setLoopVideo] = useState(true)
     const [isDraggingDetails, setIsDraggingDetails] = useState(false)
     const [detailsPanelPosition, setDetailsPanelPosition] = useState({ x: 18, y: 92 })
+    // Collapses the floating panel down to just video + drone name — toggled
+    // by the "M" key (see effect below) or the header button.
+    const [isPanelMinimized, setIsPanelMinimized] = useState(false)
     const focusedDrone = useMemo(
         () => drones.find((d) => d.id === focusedDroneId) || null,
         [drones, focusedDroneId]
+    )
+    // Re-derived fresh every render from the live `drones` poll — not a
+    // frozen click-time snapshot — so the floating panel below reflects the
+    // drone's actual current status/battery/etc. instead of going stale the
+    // moment it stops matching what was true when it was clicked.
+    const selectedDrone = useMemo(
+        () => drones.find((d) => d.id === selectedDroneId) || null,
+        [drones, selectedDroneId]
     )
     const popupDrone = useMemo(
         () => activeDrones.find((d) => d.id === popupDroneId) || null,
@@ -268,17 +288,43 @@ export default function MapView({
     useEffect(() => {
         if (!isDraggingDetails) return
 
+        let rafId = null
+        let pendingPosition = null
+
+        const applyPending = () => {
+            if (pendingPosition) {
+                setDetailsPanelPosition(pendingPosition)
+                pendingPosition = null
+            }
+            rafId = null
+        }
+
         const handleMouseMove = (event) => {
             const panelWidth = detailsPanelRef.current?.offsetWidth || 420
             const panelHeight = detailsPanelRef.current?.offsetHeight || 520
+            const minX = 8, maxX = window.innerWidth - panelWidth - 8
+            // Top bound sits below the sticky navbar (--navbar-height: 64px),
+            // not just 8px from the viewport edge — otherwise the panel can
+            // be dragged up underneath/into the navbar and overlap it.
+            const minY = NAVBAR_HEIGHT + 12, maxY = window.innerHeight - panelHeight - 8
 
             let nextX = event.clientX - dragOffsetRef.current.x
             let nextY = event.clientY - dragOffsetRef.current.y
 
-            nextX = Math.max(8, Math.min(nextX, window.innerWidth - panelWidth - 8))
-            nextY = Math.max(8, Math.min(nextY, window.innerHeight - panelHeight - 8))
+            nextX = Math.max(minX, Math.min(nextX, maxX))
+            nextY = Math.max(minY, Math.min(nextY, maxY))
 
-            setDetailsPanelPosition({ x: nextX, y: nextY })
+            // Coalesce to at most one state update per animation frame.
+            // Without this, mousemove fires far faster than the screen can
+            // repaint (well over 60Hz on many mice/trackpads), which was
+            // queuing more re-renders of this component — a live MapLibre
+            // map plus heatmap and drone-circle layers — than the browser
+            // could keep up with, and that backlog is what made dragging
+            // feel laggy rather than tracking the cursor 1:1.
+            pendingPosition = { x: nextX, y: nextY }
+            if (rafId === null) {
+                rafId = requestAnimationFrame(applyPending)
+            }
         }
 
         const handleMouseUp = () => setIsDraggingDetails(false)
@@ -287,10 +333,31 @@ export default function MapView({
         window.addEventListener('mouseup', handleMouseUp)
 
         return () => {
+            if (rafId !== null) cancelAnimationFrame(rafId)
             window.removeEventListener('mousemove', handleMouseMove)
             window.removeEventListener('mouseup', handleMouseUp)
         }
     }, [isDraggingDetails])
+
+    // "M" toggles the floating panel between full and minimized (video +
+    // name only) while it's open. Ignored while typing anywhere else in the
+    // app (search boxes, form fields, etc.) so it doesn't hijack normal text
+    // entry — only fires when no input/textarea/select/contentEditable is
+    // focused.
+    useEffect(() => {
+        if (!selectedDrone) return
+
+        const handleKeyDown = (event) => {
+            if (event.key.toLowerCase() !== 'm' || event.metaKey || event.ctrlKey || event.altKey) return
+            const active = document.activeElement
+            const tag = active?.tagName
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || active?.isContentEditable) return
+            setIsPanelMinimized((prev) => !prev)
+        }
+
+        window.addEventListener('keydown', handleKeyDown)
+        return () => window.removeEventListener('keydown', handleKeyDown)
+    }, [selectedDrone])
 
     const startDraggingDetails = (event) => {
         if (!detailsPanelRef.current) return
@@ -365,7 +432,7 @@ export default function MapView({
     }, [])
 
     const handleDroneClick = (drone) => {
-        setSelectedDrone(drone)
+        setSelectedDroneId(drone.id)
         setFocusedDroneId(drone.id)
         setFocusRequestId(prev => prev + 1)
     }
@@ -438,7 +505,7 @@ export default function MapView({
                         id="map-reset-btn"
                         onClick={() => {
                             setResetTrigger(t => t + 1)
-                            setSelectedDrone(null)
+                            setSelectedDroneId(null)
                             setFocusedDroneId(null)
                         }}
                         title="Reset to India view"
@@ -464,6 +531,12 @@ export default function MapView({
               carries the sizing class instead; <Map> just fills it via 100%.
             */}
             <div className="maplibre-map">
+            {!mapLoaded && (
+                <div className="map-loading-overlay">
+                    <Loader2 size={22} className="spin-icon" />
+                    <span>Loading map…</span>
+                </div>
+            )}
             <Map
                 ref={mapRef}
                 initialViewState={{ longitude: center.longitude, latitude: center.latitude, zoom: 12 }}
@@ -473,6 +546,7 @@ export default function MapView({
                 maxZoom={18}
                 style={{ width: '100%', height: '100%' }}
                 cursor={droneLayerIds.length ? 'pointer' : 'grab'}
+                onLoad={() => setMapLoaded(true)}
             >
                 <NavigationControl position="top-left" showCompass={false} />
 
@@ -583,24 +657,46 @@ export default function MapView({
                             <h3 title="Drag to move">
                                 {selectedDrone.name} Live Feed
                             </h3>
-                            <button
-                                className="drone-feed-modal-close"
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => {
-                                    e.stopPropagation()
-                                    setSelectedDrone(null)
-                                }}
-                                style={{
-                                    background: 'none',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    color: 'var(--color-text-secondary)',
-                                    fontSize: '20px',
-                                    padding: '4px',
-                                }}
-                            >
-                                <X size={20} />
-                            </button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <button
+                                    className="drone-feed-modal-close"
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    onClick={(e) => {
+                                        e.stopPropagation()
+                                        setIsPanelMinimized((prev) => !prev)
+                                    }}
+                                    title={`${isPanelMinimized ? 'Expand' : 'Minimize'} panel (M)`}
+                                    style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        color: 'var(--color-text-secondary)',
+                                        padding: '4px',
+                                        display: 'flex',
+                                    }}
+                                >
+                                    {isPanelMinimized ? <Maximize2 size={15} /> : <Minimize2 size={15} />}
+                                </button>
+                                <button
+                                    className="drone-feed-modal-close"
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    onClick={(e) => {
+                                        e.stopPropagation()
+                                        setSelectedDroneId(null)
+                                    }}
+                                    title="Close"
+                                    style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        color: 'var(--color-text-secondary)',
+                                        fontSize: '20px',
+                                        padding: '4px',
+                                    }}
+                                >
+                                    <X size={20} />
+                                </button>
+                            </div>
                         </div>
                         <div className="drone-feed-modal-content">
                             <div className="feed-video">
@@ -667,6 +763,7 @@ export default function MapView({
                                     </div>
                                 )}
                             </div>
+                            {!isPanelMinimized && (
                             <div className="drone-feed-details">
                                 <h4 style={{ marginBottom: '12px', fontSize: '13px', fontWeight: 600 }}>
                                     Live Analytics
@@ -749,6 +846,7 @@ export default function MapView({
                                     </div>
                                 )}
                             </div>
+                            )}
                         </div>
                     </div>
                 </div>

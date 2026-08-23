@@ -1,10 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
-import MapView from '../components/MapView'
+import { useEffect, useMemo, useState, lazy, Suspense } from 'react'
+import { Loader2 } from 'lucide-react'
 import DensityStats from '../components/DensityStats'
 import DroneCard from '../components/DroneCard'
 import FleetFilterBar from '../components/FleetFilterBar'
 import { useRegionResolver } from '../utils/useRegionResolver'
 import { useDrones } from '../context/DronesContext'
+
+// Code-split: maplibre-gl (~250KB gzipped) is the heaviest dependency in the
+// app. Loading it lazily keeps it out of the critical path for the login
+// page and anything before the user actually reaches the Dashboard.
+const MapView = lazy(() => import('../components/MapView'))
 
 // ── Persist filter state across page refreshes ───────────────────────────────
 function loadPersistedFilters() {
@@ -49,7 +54,11 @@ export default function Dashboard() {
     const { drones } = useDrones()
     const [focusedDroneId, setFocusedDroneId] = useState(null)
     const [focusRequestId, setFocusRequestId] = useState(0)
-    const [selectedDrone, setSelectedDrone] = useState(null)
+    // Track just the id, not the drone object — the object is a snapshot
+    // from the moment of the click and never gets refreshed by polling, so
+    // the floating panel would show stale status/battery/etc. forever once
+    // opened. MapView re-derives the live drone from this id every render.
+    const [selectedDroneId, setSelectedDroneId] = useState(null)
     const [autoViewDrones, setAutoViewDrones] = useState(() => {
         try {
             const raw = localStorage.getItem('autoViewDrones')
@@ -173,18 +182,27 @@ export default function Dashboard() {
         <div className="dashboard-page">
             <DensityStats />
             <div className="dashboard-grid">
-                <MapView
-                    focusedDroneId={focusedDroneId}
-                    focusRequestId={focusRequestId}
-                    maxIntensityByDrone={maxIntensityByDrone}
-                    setMaxIntensityByDrone={setMaxIntensityByDrone}
-                    selectedDrone={selectedDrone}
-                    setSelectedDrone={setSelectedDrone}
-                    filterState={filterState}
-                    filterDistrict={filterDistrict}
-                    setFocusedDroneId={setFocusedDroneId}
-                    setFocusRequestId={setFocusRequestId}
-                />
+                <Suspense fallback={
+                    <div className="map-container">
+                        <div className="map-loading-overlay" style={{ position: 'static', flex: 1 }}>
+                            <Loader2 size={22} className="spin-icon" />
+                            <span>Loading map…</span>
+                        </div>
+                    </div>
+                }>
+                    <MapView
+                        focusedDroneId={focusedDroneId}
+                        focusRequestId={focusRequestId}
+                        maxIntensityByDrone={maxIntensityByDrone}
+                        setMaxIntensityByDrone={setMaxIntensityByDrone}
+                        selectedDroneId={selectedDroneId}
+                        setSelectedDroneId={setSelectedDroneId}
+                        filterState={filterState}
+                        filterDistrict={filterDistrict}
+                        setFocusedDroneId={setFocusedDroneId}
+                        setFocusRequestId={setFocusRequestId}
+                    />
+                </Suspense>
 
                 <div className="drones-panel">
                     {/* Panel header */}
@@ -256,7 +274,7 @@ export default function Dashboard() {
                                     onClick={() => {
                                         setFocusedDroneId(drone.id)
                                         setFocusRequestId(prev => prev + 1)
-                                        setSelectedDrone(drone)
+                                        setSelectedDroneId(drone.id)
                                     }}
                                 />
                             ))

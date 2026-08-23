@@ -4,9 +4,17 @@ import { useState, useEffect } from 'react'
 // usable, but the real list always comes from GET /api/auth/models (sourced
 // from cv_pipeline/stream_config.py's MODEL_PRESETS) so a new model becomes
 // selectable here automatically once it's added there.
+//
+// This also covers the brief window on every mount before that fetch
+// resolves (useState below starts with this list): if it's missing a model
+// that an existing drone is already using, MUI's Select logs an "out of
+// range value" warning and shows blank until the fetch completes. Keeping
+// this in sync with MODEL_PRESETS avoids that — it doesn't need to be
+// perfectly current, just cover whatever models are actually in use.
 const FALLBACK_MODELS = [
-    { key: 'sdnet', label: 'SDNet (crowd density)' },
-    { key: 'yolo', label: 'YOLO (object detection)' },
+    { key: 'sdnet', label: 'SDNet (MovingDroneCrowd, temporal density map)' },
+    { key: 'yolo', label: 'YOLOv8n (COCO) — general-purpose, ground-level photos' },
+    { key: 'yolo-visdrone', label: 'YOLOv8n (VisDrone) — aerial/drone-camera pretrained' },
 ]
 
 /**

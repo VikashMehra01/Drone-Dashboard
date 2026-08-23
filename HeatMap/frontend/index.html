@@ -6,6 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="SkyWatch — Drone-Based Surveillance Portal with Real-Time Crowd Density Visualization" />
     <title>SkyWatch — Drone Surveillance Portal</title>
+    <!-- Warms up the DNS/TLS connection to the map tile CDN while the rest
+         of the app is still loading, instead of only starting it once the
+         map component mounts and requests its style. -->
+    <link rel="preconnect" href="https://tiles.openfreemap.org" crossorigin />
   </head>
   <body>
     <div id="root"></div>

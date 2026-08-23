@@ -563,9 +563,24 @@ a {
 }
 
 .maplibre-map {
+  position: relative;
   flex: 1;
   min-height: 420px;
   width: 100%;
+}
+
+.map-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: 13px;
 }
 
 .map-legend {
@@ -2976,7 +2991,15 @@ body:not(.light-mode) .maplibregl-ctrl-icon {
 /* ===== Admin Panel ===== */
 .admin-panel {
   max-width: 700px !important;
-  max-height: 86vh;
+  /* Fixed, not max-height — the Users and Drones tabs have very different
+     content lengths, and with only a max-height the modal would shrink or
+     stretch to fit whichever tab is currently showing, resizing visibly
+     every time you switch. A stable height keeps it the same size always;
+     .admin-panel-body's own overflow-y:auto handles content that's taller
+     than that (e.g. many drones/users), and shorter tabs just show empty
+     space at the bottom instead of shrinking the whole modal. */
+  height: 86vh;
+  max-height: 780px;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -3167,6 +3190,25 @@ body:not(.light-mode) .maplibregl-ctrl-icon {
 .admin-refresh-btn:hover {
   background: var(--color-bg-card-hover);
   color: var(--color-text-primary);
+}
+
+.admin-add-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-accent-blue);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.admin-add-btn:hover {
+  background: rgba(59, 130, 246, 0.2);
 }
 
 .admin-table {
