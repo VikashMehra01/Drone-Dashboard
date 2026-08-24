@@ -1,0 +1,20 @@
+# Navigate to the repo
+cd /Users/sarvansuthar/Downloads/Drone-Dashboard-main/SkyForce/SkyForge-GCS-Repo
+
+# Create virtual environment (note: venv, not venu!)
+python3 -m venv venv
+
+# Activate it
+source venv/bin/activate
+
+# Upgrade pip
+python -m pip install --upgrade pip setuptools wheel
+
+# Install dependencies
+python -m pip install -r src/applications/requirements.txt
+
+# Set Python path
+export PYTHONPATH="/Users/sarvansuthar/Downloads/Drone-Dashboard-main/SkyForce/SkyForge-GCS-Repo/src"
+
+# Run the app
+python src/applications/main.py

@@ -2,7 +2,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import {
     LayoutDashboard, Video, BarChart3, Radio,
-    Shield, Info, WifiOff, PlusCircle, LogOut, Settings2,
+    Shield, Info, WifiOff, PlusCircle, LogOut, Settings2, Plane, Map,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useDrones } from '../context/DronesContext'
@@ -12,6 +12,8 @@ import AddDroneModal from './AddDroneModal'
 const navItems = [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard },
     { path: '/feeds', label: 'Live Feeds', icon: Video },
+    { path: '/flight-control', label: 'Flight Control', icon: Plane },
+    { path: '/mapping', label: 'Mapping', icon: Map },
     { path: '/analytics', label: 'Analytics', icon: BarChart3 },
     { path: '/about', label: 'About', icon: Info },
 ]

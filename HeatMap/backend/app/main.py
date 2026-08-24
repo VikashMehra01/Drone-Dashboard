@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.db import init_db_pool, close_db_pool, ensure_schema, DB_PATH
-from app.routers import density, drone, alerts
+from app.routers import density, drone, alerts, skyforge, mapping
 from app.routers.auth import router as auth_router, reconcile_drone_statuses
 import os
 
@@ -24,6 +24,8 @@ app.add_middleware(
 app.include_router(density.router)
 app.include_router(drone.router)
 app.include_router(alerts.router)
+app.include_router(skyforge.router)
+app.include_router(mapping.router)
 app.include_router(auth_router)
 
 

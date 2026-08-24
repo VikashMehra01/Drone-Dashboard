@@ -6,11 +6,14 @@ import { NotificationProvider } from './context/NotificationContext'
 import { SettingsProvider } from './context/SettingsContext'
 import { AuthProvider } from './context/AuthContext'
 import { DronesProvider } from './context/DronesContext'
+import { SkyForgeProvider } from './context/SkyForgeContext'
 import Dashboard from './pages/Dashboard'
 import DroneFeed from './pages/DroneFeed'
 import Analytics from './pages/Analytics'
 import About from './pages/About'
 import Login from './pages/Login'
+import FlightControl from './pages/FlightControl'
+import Mapping from './pages/Mapping'
 import { useSettings } from './context/SettingsContext'
 import { ThemeProvider, createTheme } from '@mui/material/styles'
 import { useMemo } from 'react'
@@ -119,6 +122,8 @@ function AppContent() {
                           <Routes>
                             <Route path="/" element={<Dashboard />} />
                             <Route path="/feeds" element={<DroneFeed />} />
+                            <Route path="/flight-control" element={<FlightControl />} />
+                            <Route path="/mapping" element={<Mapping />} />
                             <Route path="/analytics" element={<Analytics />} />
                             <Route path="/about" element={<About />} />
                           </Routes>
@@ -139,7 +144,9 @@ function AppContent() {
 function App() {
   return (
     <SettingsProvider>
-      <AppContent />
+      <SkyForgeProvider>
+        <AppContent />
+      </SkyForgeProvider>
     </SettingsProvider>
   )
 }

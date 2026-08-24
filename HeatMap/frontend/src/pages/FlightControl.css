@@ -1,0 +1,410 @@
+/* Layout */
+.flight-control-content {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 1200px) {
+  .flight-control-content {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Error Banner */
+.error-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--color-accent-red);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  margin-bottom: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  animation: slideIn 0.2s ease-out;
+}
+
+.error-banner button {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+@keyframes slideIn {
+  from { transform: translateY(-8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* Panels */
+.panel {
+  background: var(--gradient-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 20px;
+}
+
+.panel h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 10px;
+}
+
+.panel h3 {
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+/* Connection Panel */
+.connection-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.connection-form {
+  background: var(--color-bg-secondary);
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}
+
+.form-group {
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-group label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.form-group input,
+.form-group select {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: var(--color-accent-blue);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.form-group input:disabled,
+.form-group select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-connect {
+  width: 100%;
+  background: var(--color-accent-blue);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  color: white;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.btn-connect:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.btn-connect:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Drone List */
+.drone-list {
+  flex: 1;
+}
+
+.drone-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.drone-item {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.drone-item:hover {
+  border-color: var(--color-border-light);
+  background: var(--color-bg-card-hover);
+}
+
+.drone-item.active {
+  border-color: rgba(59, 130, 246, 0.75);
+  background: rgba(59, 130, 246, 0.08);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3);
+}
+
+.drone-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.drone-id {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.status-badge {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 50px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.status-badge.armed {
+  background: rgba(239, 68, 68, 0.14);
+  color: var(--color-accent-red);
+}
+
+.status-badge.disarmed {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--color-accent-green);
+}
+
+.drone-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--color-text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  justify-content: center;
+  align-items: center;
+  font-size: 13px;
+}
+
+/* Control Panel */
+.control-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+}
+
+.control-panel.empty {
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+}
+
+/* Telemetry Section */
+.telemetry-section,
+.control-section {
+  background: var(--color-bg-secondary);
+  padding: 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}
+
+.telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.telemetry-item {
+  background: rgba(59, 130, 246, 0.05);
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  text-align: center;
+}
+
+.telemetry-item label {
+  display: block;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  font-weight: 600;
+}
+
+.telemetry-item .value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.battery-bar {
+  height: 5px;
+  background: var(--color-border);
+  border-radius: 3px;
+  margin: 6px 0;
+  overflow: hidden;
+}
+
+.battery-fill {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.control-section h3 {
+  margin-top: 0;
+}
+
+/* Mode Buttons */
+.mode-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.mode-btn {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 9px;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-size: 11px;
+}
+
+.mode-btn:hover:not(:disabled) {
+  border-color: var(--glass-border);
+  color: var(--color-accent-blue);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.mode-btn.active {
+  background: var(--color-accent-blue);
+  border-color: var(--color-accent-blue);
+  color: white;
+}
+
+.mode-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Arm Controls */
+.arm-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* Buttons */
+.btn {
+  padding: 10px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.btn-arm {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--color-accent-green);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.btn-arm:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.2);
+}
+
+.btn-disarm {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--color-accent-amber);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.btn-disarm:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.2);
+}
+
+/* Emergency Controls */
+.control-section.emergency {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.btn-emergency {
+  background: var(--color-accent-red);
+  color: white;
+  border-color: var(--color-accent-red);
+}
+
+.btn-emergency:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.btn-disconnect {
+  background: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  border-color: var(--color-border);
+}
+
+.btn-disconnect:hover:not(:disabled) {
+  border-color: var(--color-border-light);
+  color: var(--color-text-primary);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

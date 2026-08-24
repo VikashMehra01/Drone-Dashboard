@@ -1,0 +1,15 @@
+# 1. Backend must be running
+cd HeatMap/backend
+source venv/bin/activate
+uvicorn app.main:app --reload --port 8000
+
+# 2. In another terminal, replay one mission folder at a time
+cd HeatMap/backend
+python3 scripts/replay_mapping_frames.py \
+  --dir "/Users/sarvansuthar/Downloads/DCIM/DJI_202512221424_001_Create-Area-Route6" \
+  --reset --fps 8
+
+# 3. In another terminal, run the frontend
+cd HeatMap/frontend
+npm install
+npm run dev 

@@ -1,0 +1,29 @@
+cd D:\SkyForge-GCS-Repo\SkyForge-GCS-Repo
+Remove-Item -Recurse -Force .\venv
+py -3.11 -m venv venv
+.\venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r .\src\applications\requirements.txt
+$env:PYTHONPATH=&quot;D:\SkyForge-GCS-Repo\SkyForge-GCS-Repo\src&quot;
+python src/applications/main.py
+
+If failing to activate venv:
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\venv\Scripts\Activate.ps1
+
+python -m pip install -r .\src\applications\build_requirements.txt
+
+for making exe-
+cd D:\SkyForge-GCS-Repo\SkyForge-GCS-Repo\src\applications
+
+&quot;0.1.0&quot; | Out-File -Encoding utf8 version.txt
+&quot;# SkyForge GCS&quot; | Out-File -Encoding utf8 README.md
+&quot;# Quickstart&quot; | Out-File -Encoding utf8 QUICKSTART.md
+&quot;# Operator Mapping App PRD&quot; | Out-File -Encoding utf8 PRD_operator_mapping_app.md
+
+python build.py –all
+
+D:\SkyForge-GCS-Repo\SkyForge-GCS-Repo\src\applications\dist\SkyForge_GCS.exe
+
+rtsp://192.168.144.108:554/stream=1
+commented out this line in requirements.txt file- #pymavlink-dialects&gt;=2.4

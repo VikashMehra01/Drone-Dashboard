@@ -9,7 +9,7 @@ scipy>=1.7
 
 # Telemetry & MAVLink
 pymavlink>=2.4
-pymavlink-dialects>=2.4
+# pymavlink-dialects>=2.4  # Not available on PyPI
 
 # Web & Geospatial
 requests>=2.28
@@ -17,6 +17,9 @@ pyproj>=3.3
 
 # Visualization & Reporting
 matplotlib>=3.5
+
+# Pin scipy for Python 3.10 compatibility
+scipy==1.10.1
 
 # Optional: for faster image processing
 # scikit-image>=0.18
