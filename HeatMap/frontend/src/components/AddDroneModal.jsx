@@ -80,8 +80,8 @@ export default function AddDroneModal({ open, onClose, authFetch, onSuccess = ()
                         </div>
 
                         {field('Stream Source *', 'source', {
-                            placeholder: '../media/videos/droneVid.mp4  or  rtsp://192.168.1.10:554/live',
-                            helperText: 'Relative to cv_pipeline/ — file path, RTSP, RTMP, or HTTP URL'
+                            placeholder: '../media/videos/droneVid.mp4  ·  rtsp://192.168.1.10:554/live  ·  rtmp://localhost:1935/mystream',
+                            helperText: 'File path (relative to cv_pipeline/), or an RTSP / RTMP / HTTP stream URL'
                         })}
 
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>

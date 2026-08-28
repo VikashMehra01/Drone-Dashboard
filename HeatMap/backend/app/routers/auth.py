@@ -285,6 +285,41 @@ def _validate_source(source: str, drone_dir) -> str | None:
     return None
 
 
+def _probe_live_source(source: str, timeout: float = 4.0) -> str | None:
+    """For a live URL, TCP-connect to its host:port so an unreachable / refused
+    source fails the API call immediately with a clear reason — instead of
+    spawning a worker that then loops on reconnect invisibly. Returns an error
+    string, or None if the source is a local file or the host is reachable.
+
+    Only the transport connect is checked (RTSP/RTMP signalling is always TCP);
+    a wrong stream *path* still connects here and is caught later by
+    stream_processor.py's bounded initial-connect, which reports it back.
+    """
+    import socket
+    from urllib.parse import urlparse
+
+    parsed = urlparse(source)
+    scheme = parsed.scheme.lower()
+    if scheme not in _load_stream_config().LIVE_URL_SCHEMES:
+        return None
+    host = parsed.hostname
+    if not host:
+        return f"Invalid stream URL: '{source}'"
+    default_ports = _load_stream_config().DEFAULT_INGEST_PORTS
+    port = parsed.port or default_ports.get(scheme) or (443 if scheme == "https" else 80)
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return None
+    except ConnectionRefusedError:
+        return f"Connection refused — nothing is serving {scheme} at {host}:{port}"
+    except socket.timeout:
+        return f"Connection timed out — {host}:{port} is not reachable"
+    except socket.gaierror:
+        return f"Cannot resolve host '{host}'"
+    except OSError as exc:
+        return f"{host}:{port} unreachable ({exc.strerror or exc})"
+
+
 @router.get("/models")
 async def list_models(_admin: dict = Depends(require_admin)):
     """(Admin) List available detection models, sourced from cv_pipeline/stream_config.py."""
@@ -505,23 +540,33 @@ async def update_drone(drone_id: str, body: EditDroneRequest, _admin: dict = Dep
 
 @router.post("/drones/stop/{drone_id}", status_code=status.HTTP_200_OK)
 async def stop_drone(drone_id: str, _admin: dict = Depends(require_admin)):
-    """(Admin) Stop the stream processor using its DB-recorded PID."""
+    """(Admin) Stop the stream processor. Kills the DB-recorded PID *and* sweeps
+    any other stream_processor.py worker for this drone_id — a feed that dropped
+    and is reconnecting forever shows as 'idle' on the dashboard but its process
+    is still alive, which would otherwise block a later resume with a 409."""
     from app.routers.density import active_streams
+    from app.routers.drone import clear_stream_error
 
     config = _db_get_config(drone_id)
     pid = config.get("pid") if config else None
-    killed = _reg.terminate(pid)
+
+    killed_pids: list[int] = []
+    if pid and _reg.terminate(pid):
+        killed_pids.append(pid)
+    # Sweep orphans (stale DB pid, out-of-band relaunch, reconnect-loop zombie).
+    killed_pids.extend(p for p in _reg.terminate_by_drone_id(drone_id) if p not in killed_pids)
 
     keys = [k for k, v in active_streams.items() if v.get("drone_id") == drone_id]
     for k in keys:
         del active_streams[k]
 
     _db_set_stopped(drone_id)
+    clear_stream_error(drone_id)
 
-    if killed:
-        return {"message": f"Drone '{drone_id}' stopped (killed PID {pid}).", "killed_pids": [pid]}
-    else:
-        return {"message": f"Drone '{drone_id}': no running process found, stream data cleared.", "killed_pids": []}
+    if killed_pids:
+        return {"message": f"Drone '{drone_id}' stopped (killed PID {', '.join(map(str, killed_pids))}).",
+                "killed_pids": killed_pids}
+    return {"message": f"Drone '{drone_id}': no running process found, stream data cleared.", "killed_pids": []}
 
 
 @router.post("/drones/resume/{drone_id}", status_code=status.HTTP_202_ACCEPTED)
@@ -534,16 +579,29 @@ async def resume_drone(drone_id: str, _admin: dict = Depends(require_admin)):
         raise HTTPException(status_code=404,
             detail=f"No saved config for '{drone_id}'. Use Add Drone to launch it first.")
 
-    if _reg.is_alive(config.get("pid")):
-        raise HTTPException(status_code=409,
-            detail=f"Drone '{drone_id}' is already running (PID {config['pid']}).")
-
     if not processor.exists():
         raise HTTPException(status_code=404, detail="stream_processor.py not found.")
+
+    # Clear out any worker still alive for this drone before relaunching. A feed
+    # that dropped is reconnecting forever behind an 'idle'-looking dashboard;
+    # resume should recover from that, not refuse with a 409.
+    stale = _reg.terminate_by_drone_id(drone_id)
+    if config.get("pid") and _reg.terminate(config["pid"]) and config["pid"] not in stale:
+        stale.append(config["pid"])
+    if stale:
+        _time.sleep(1)  # let the OS reap them / release the RTSP socket
 
     source_error = _validate_source(config["source"], drone_dir)
     if source_error:
         raise HTTPException(status_code=400, detail=source_error)
+
+    reach_error = _probe_live_source(config["source"])
+    if reach_error:
+        raise HTTPException(status_code=502,
+            detail=f"Can't resume '{drone_id}': {reach_error}")
+
+    from app.routers.drone import clear_stream_error
+    clear_stream_error(drone_id)
 
     cmd = _build_cmd(python_exe, processor, config)
     log_path = drone_dir / f"drone_{drone_id}.log"
@@ -584,6 +642,14 @@ async def launch_drone(body: AddDroneRequest, _admin: dict = Depends(require_adm
     source_error = _validate_source(body.source, drone_dir)
     if source_error:
         raise HTTPException(status_code=400, detail=source_error)
+
+    reach_error = _probe_live_source(body.source)
+    if reach_error:
+        raise HTTPException(status_code=502,
+            detail=f"Stream source unreachable: {reach_error}")
+
+    from app.routers.drone import clear_stream_error
+    clear_stream_error(body.drone_id)
 
     config = {
         "drone_id": body.drone_id, "drone_name": body.drone_name,

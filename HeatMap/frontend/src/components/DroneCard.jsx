@@ -1,8 +1,9 @@
-import { useState } from 'react'
-import { Battery, BatteryFull, BatteryMedium, BatteryLow, BatteryWarning, ArrowUp, Users, Edit2, MapPin, Plane } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Battery, BatteryFull, BatteryMedium, BatteryLow, BatteryWarning, ArrowUp, Users, Edit2, MapPin, Power, Loader2, AlertTriangle } from 'lucide-react'
 import { Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions, TextField, Button } from '@mui/material'
 import droneIcon from '../assets/drone.png'
 import { useSettings } from '../context/SettingsContext'
+import { useAuth } from '../context/AuthContext'
 
 /**
  * Highlights occurrences of `term` inside `text` by wrapping them in <mark>.
@@ -62,18 +63,60 @@ export default function DroneCard({
     searchTerm = '',
     regionLabel = '',
 }) {
+    const hasError = drone.status === 'error'
     const badgeClass = isCritical ? 'critical' : drone.status
     const badgeLabel = isCritical ? 'critical' : drone.status
     const { hideFleetLabels, dashboardTextSize } = useSettings()
+    const { user, authFetch } = useAuth()
     const [showThresholdModal, setShowThresholdModal] = useState(false)
     const [tempThreshold, setTempThreshold] = useState(threshold)
 
+    // ── Admin power toggle (active ⇄ idle) ───────────────────────────────────
+    // active       → POST /api/auth/drones/stop/{id}    (kills the CV subprocess)
+    // idle / error → POST /api/auth/drones/resume/{id}  (relaunches from saved config)
+    // The DronesContext 1s poll flips the badge once the backend confirms.
+    const isAdmin = user?.role === 'admin'
+    const isActive = drone.status === 'active'
+    const canToggle = isAdmin && ['active', 'idle', 'error'].includes(drone.status)
+    const [pending, setPending] = useState(null)   // 'active' | 'idle' | null
+    const busy = pending !== null
+    const [toggleErr, setToggleErr] = useState('')
+
+    useEffect(() => {
+        if (!toggleErr) return
+        const t = setTimeout(() => setToggleErr(''), 5000)
+        return () => clearTimeout(t)
+    }, [toggleErr])
+
+    const setPowerState = async (next) => {
+        // 'idle' (stop) is always allowed — a drone can look idle on the
+        // dashboard while its worker is still alive reconnecting, and the user
+        // needs a way to force-kill it. 'active' (resume) is a no-op if already
+        // streaming.
+        if (busy || (next === 'active' && isActive)) return
+        const endpoint = next === 'active' ? 'resume' : 'stop'
+        setPending(next)
+        setToggleErr('')
+        try {
+            const res = await authFetch(
+                `http://localhost:8000/api/auth/drones/${endpoint}/${drone.id}`,
+                { method: 'POST' }
+            )
+            const data = await res.json().catch(() => ({}))
+            if (!res.ok) setToggleErr(data.detail || `Couldn't set ${next}`)
+        } catch {
+            setToggleErr('Cannot reach server')
+        } finally {
+            setPending(null)
+        }
+    }
+
     return (
         <div
-            className={`drone-card ${isFocused ? 'focused' : ''} ${isCritical ? 'critical' : ''}`}
+            className={`drone-card ${isFocused ? 'focused' : ''} ${isCritical ? 'critical' : ''} ${hasError ? 'errored' : ''}`}
             id={`drone-${drone.id}`}
-            onClick={drone.status === 'idle' ? undefined : onClick}
-            style={{ cursor: drone.status === 'idle' ? 'default' : 'pointer' }}
+            onClick={(drone.status === 'idle' || hasError) ? undefined : onClick}
+            style={{ cursor: (drone.status === 'idle' || hasError) ? 'default' : 'pointer' }}
         >
             <div className="drone-card-top">
                 <div className="drone-name">
@@ -110,8 +153,16 @@ export default function DroneCard({
                 </div>
             </div>
 
+            {/* Stream error — source unreachable / refused; worker has exited */}
+            {hasError && (
+                <div className="drone-card-error">
+                    <AlertTriangle size={13} />
+                    <span>{drone.error || 'Stream unreachable — the drone feed could not be opened.'}</span>
+                </div>
+            )}
+
             {/* Region label — shown when available */}
-            {regionLabel && drone.status !== 'idle' && (
+            {regionLabel && drone.status !== 'idle' && !hasError && (
                 <div className="drone-region-label">
                     <MapPin size={10} />
                     {regionLabel}
@@ -142,7 +193,49 @@ export default function DroneCard({
                 </div>
             </div>
 
-            <Dialog 
+            {canToggle && (
+                <div
+                    className="drone-power"
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <span className="drone-power-label">
+                        <Power size={11} />
+                        Power
+                    </span>
+                    <div className="drone-power-seg" role="group" aria-label="Drone power state">
+                        <button
+                            type="button"
+                            className={`drone-power-seg-btn ${isActive ? 'on-active' : ''}`}
+                            aria-pressed={isActive}
+                            disabled={busy || isActive}
+                            title={isActive ? 'Streaming' : 'Start / restart this drone'}
+                            onClick={() => setPowerState('active')}
+                        >
+                            {pending === 'active'
+                                ? <Loader2 size={11} className="spin-icon" />
+                                : <span className="drone-power-dot active" />}
+                            Active
+                        </button>
+                        <button
+                            type="button"
+                            className={`drone-power-seg-btn ${!isActive ? 'on-idle' : ''}`}
+                            aria-pressed={!isActive}
+                            disabled={busy}
+                            title={isActive ? 'Stop this drone' : 'Force-stop (kills any lingering worker)'}
+                            onClick={() => setPowerState('idle')}
+                        >
+                            {pending === 'idle'
+                                ? <Loader2 size={11} className="spin-icon" />
+                                : <span className="drone-power-dot idle" />}
+                            Idle
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {toggleErr && <div className="drone-power-error">{toggleErr}</div>}
+
+            <Dialog
                 open={showThresholdModal} 
                 onClose={() => setShowThresholdModal(false)}
                 PaperProps={{

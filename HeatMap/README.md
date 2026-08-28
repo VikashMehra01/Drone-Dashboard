@@ -71,6 +71,65 @@ Video Source                  cv_pipeline/                        backend/ (Fast
 4. The backend updates `active_streams` in memory (used for “live” polling) and, at most once every `HISTORY_SAMPLE_SECONDS`, persists a point to `density_records` for the Analytics history endpoint.
 5. `DronesContext` polls `/api/drones/` (fleet list + coordinates) and `/api/density/current` (live headcount per drone) every 1s and shares the result with every subscribed component, which update the Leaflet heatmap/markers; each drone's rolling headcount also feeds `NotificationContext`, which raises a toast + `/api/alerts/broadcast` → Telegram call if the threshold is sustained.
 
+### How video reaches the models (local file vs. live stream)
+
+There is **one code path** for both cases — `cv2.VideoCapture` plus a `while` loop
+that pulls one frame at a time and hands it straight to the detector
+(`cv_pipeline/stream_processor.py` → `process_stream()`). The model never sees a
+"stream"; it only ever receives a single decoded `numpy` BGR image per call to
+`PersonDetector.detect_people(frame)`. What changes between a file and a live URL
+is **only what the capture handle is bound to** and **how the loop reacts to the
+end of data**.
+
+```
+LOCAL FILE                                   LIVE STREAM (rtsp:// / rtmp:// / http://)
+──────────                                   ─────────────────────────────────────────
+cv2.VideoCapture("…/droneVid.mp4")           cv2.VideoCapture("rtsp://host:554/live")
+  └─ OpenCV opens the file on disk             └─ OpenCV hands the URL to its bundled
+                                                 FFmpeg (libavformat/libavcodec), which:
+                                                 1. does the protocol handshake
+                                                    (RTSP DESCRIBE/SETUP/PLAY, RTMP
+                                                    handshake, or HTTP GET)
+                                                 2. runs a background thread reading
+                                                    encoded packets (RTP / FLV / …)
+                                                    off the TCP/UDP socket
+                                                 3. decodes them (H.264 → raw frames)
+                                                 4. keeps decoded frames in a small
+                                                    internal queue
+        │                                                    │
+        ▼                                                    ▼
+   ret, frame = cap.read()   ← identical call; returns (True, <H×W×3 BGR ndarray>) either way
+        │
+        ▼
+   detector.detect_people(frame)   ← frame is downscaled to width 480
+                                     (DETECTION_MAX_WIDTH) inside the detector, then inferred
+        │
+        ▼
+   POST /api/density/update   → then sleep to pace the loop at --fps (default 5)
+```
+
+So, to answer the common question directly: **yes — the worker holds the live
+connection open and continuously pulls frames from it in a loop, throttled to
+`--fps`.** It is a *pull* loop, not a push: nothing is rendered to a screen and
+nothing is written to disk. The stream keeps flowing on the wire whether we read
+or not; each `cap.read()` just takes the next frame FFmpeg has decoded.
+
+**The differences, all in loop *control* (not in how a frame reaches the model):**
+
+| Aspect | Local file | Live stream |
+|---|---|---|
+| `cap.read()` returns `False` | end of file → rewind (`--loop true`, the default) or stop | connection dropped → `cap.release()`, then the **outer `while` loop** re-opens the source with exponential backoff (`RECONNECT_DELAY_SECONDS` 3s → 30s cap; `--max-reconnect-attempts 0` = retry forever) |
+| Looping | `loop_video` honoured | forced to `False` — a live feed has no "start" to seek to |
+| FFmpeg options | none | `_apply_ffmpeg_capture_options()` sets `OPENCV_FFMPEG_CAPTURE_OPTIONS` before opening — `rtsp_transport;tcp` for RTSP, `rtmp_live;live\|fflags;nobuffer` for RTMP (override via the env var) |
+| Frame rate vs. `--fps` | file is decoded no faster than the loop consumes it, so every frame is seen (subsampled only by the `--fps` sleep) | the camera/publisher produces at its own rate (often 25–30 fps). We read one frame per iteration then `sleep(1/fps - elapsed)`. Between our reads FFmpeg keeps decoding into its queue, so with a small queue we effectively **sample the newest frames and skip the rest**. If inference is slower than `1/fps`, no sleep happens and the worker can drift behind the live edge (latency creep); `fflags;nobuffer` / `rtmp_live;live` keep that bounded. A stricter cap would be `cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)` or a grab-drain loop — not currently done. |
+| Temporal model (SDNet) | consecutive file frames are naturally contiguous | SDNet pairs each frame with the previous one; right after a reconnect the "previous frame" is stale, so the first couple of density maps are noisy until a steady cadence re-establishes |
+
+The frame handed to `detect_people()` is always the **full source resolution**
+that came out of `cap.read()`; each detector then resizes it to
+`DETECTION_MAX_WIDTH` (480 px wide, aspect preserved) so per-frame CPU cost and
+the effective input size are identical across models and across file/live
+sources.
+
 ---
 
 ## 🧰 Libraries & Tech Stack

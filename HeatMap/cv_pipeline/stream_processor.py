@@ -13,6 +13,8 @@ os.environ.setdefault("MKL_NUM_THREADS", str(DEFAULT_NUM_THREADS))
 
 import cv2
 import time
+import socket
+import sys
 import requests
 import argparse
 import torch
@@ -20,17 +22,61 @@ from urllib.parse import urlparse
 from detection import PersonDetector
 from stream_config import (
     API_UPDATE_ENDPOINT,
+    API_HOST,
+    API_PORT,
     DEFAULT_FPS,
     DEFAULT_LOOP_VIDEO,
     LIVE_URL_SCHEMES,
+    FFMPEG_CAPTURE_OPTIONS,
+    DEFAULT_INGEST_PORTS,
     RECONNECT_DELAY_SECONDS,
     MAX_RECONNECT_DELAY_SECONDS,
     MAX_RECONNECT_ATTEMPTS,
+    INITIAL_CONNECT_MAX_ATTEMPTS,
+    MAX_RECONNECT_DURATION_SECONDS,
     MODEL_PRESETS,
 )
 
 # FastAPI endpoint for updating live density
 API_UPDATE_URL = API_UPDATE_ENDPOINT
+# FastAPI endpoint for reporting a fatal stream error (unreachable source, …)
+API_STREAM_ERROR_URL = f"http://{API_HOST}:{API_PORT}/api/drones/stream-error"
+
+
+def diagnose_connection(source: str) -> str:
+    """Best-effort human-readable reason a live source can't be opened.
+
+    OpenCV/FFmpeg swallow the underlying socket error, so we reproduce the
+    TCP connect ourselves (RTSP/RTMP signalling is always TCP) and translate
+    errno into the phrase an operator expects to see on the dashboard.
+    """
+    parsed = urlparse(source)
+    host = parsed.hostname
+    if not host:
+        return "Invalid stream URL"
+    port = parsed.port or DEFAULT_INGEST_PORTS.get(parsed.scheme.lower()) \
+        or (443 if parsed.scheme.lower() == "https" else 80)
+    try:
+        with socket.create_connection((host, port), timeout=4):
+            return (f"Reached {host}:{port} but the stream could not be opened "
+                    f"(wrong path, codec, or auth)")
+    except ConnectionRefusedError:
+        return f"Connection refused — nothing is serving {parsed.scheme} at {host}:{port}"
+    except socket.timeout:
+        return f"Connection timed out — {host}:{port} is not reachable"
+    except socket.gaierror:
+        return f"Cannot resolve host '{host}'"
+    except OSError as exc:
+        return f"{host}:{port} unreachable ({exc.strerror or exc})"
+
+
+def report_stream_error(message: str, **meta) -> None:
+    """Tell the backend this drone's stream failed, so the dashboard can show it."""
+    payload = {"error": message, "timestamp": time.time(), **meta}
+    try:
+        requests.post(API_STREAM_ERROR_URL, json=payload, timeout=3)
+    except requests.exceptions.RequestException as exc:
+        print(f"[StreamProcessor] Could not report stream error to backend: {exc}")
 
 
 def _apply_thread_cap(num_threads: int) -> None:
@@ -57,6 +103,28 @@ def is_live_url(source: str) -> bool:
         return False
 
 
+def _apply_ffmpeg_capture_options(source: str) -> None:
+    """Set OpenCV's FFmpeg backend options for this source's protocol.
+
+    OpenCV reads OPENCV_FFMPEG_CAPTURE_OPTIONS once, when cv2.VideoCapture opens
+    an FFmpeg-backed source, so this has to run before the capture loop. RTSP
+    over the default UDP transport and RTMP with FFmpeg's default probing both
+    behave badly on real drone links (dropped packets, multi-second reconnect
+    lag); the per-scheme defaults in stream_config.FFMPEG_CAPTURE_OPTIONS fix
+    the common cases. An explicit OPENCV_FFMPEG_CAPTURE_OPTIONS in the
+    environment always wins.
+    """
+    if os.environ.get("OPENCV_FFMPEG_CAPTURE_OPTIONS"):
+        print("[StreamProcessor] Using OPENCV_FFMPEG_CAPTURE_OPTIONS from environment: "
+              f"{os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS']}")
+        return
+    scheme = urlparse(source).scheme.lower()
+    opts = FFMPEG_CAPTURE_OPTIONS.get(scheme)
+    if opts:
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = opts
+        print(f"[StreamProcessor] FFmpeg capture options for {scheme}: {opts}")
+
+
 def process_stream(
     source: str,
     target_fps: int = 5,
@@ -78,13 +146,38 @@ def process_stream(
     Process a video source (local file OR live network stream URL) at a given FPS,
     estimate crowd density, and post the data to the backend.
 
+    How frames reach the model (same for files and live streams):
+      A single cv2.VideoCapture handle + a pull loop. Each iteration does one
+      `ret, frame = cap.read()` and passes that one decoded BGR ndarray straight
+      to `detector.detect_people(frame)` — the detector never sees a "stream",
+      only individual frames. After each frame the loop sleeps to pace itself at
+      `target_fps` (default 5).
+
+      - Local file : cap.read() decodes the next frame from disk. On EOF, rewind
+                     (loop_video) or stop.
+      - Live URL   : OpenCV hands the URL to its bundled FFmpeg, which opens the
+                     network session (RTSP/RTMP handshake or HTTP GET), reads
+                     encoded packets off the socket on a background thread,
+                     decodes them, and keeps recent frames in a small internal
+                     queue. cap.read() pops the next one. Nothing is rendered or
+                     saved — the worker just holds the connection open and keeps
+                     pulling. The publisher runs at its own rate (~25-30 fps);
+                     between our reads FFmpeg keeps buffering, so we effectively
+                     sample the newest frames and skip the rest.
+
     Live URL behaviour:
-      - Auto-reconnects with exponential backoff when the stream drops.
+      - _apply_ffmpeg_capture_options() sets protocol-tuned FFmpeg options first
+        (TCP transport for RTSP, live/no-buffer for RTMP).
+      - Auto-reconnects with exponential backoff when the stream drops
+        (ret == False): the inner frame loop breaks, the outer loop re-opens
+        cv2.VideoCapture(source).
       - loop_video is ignored (always False) for live URLs.
       - max_reconnect_attempts = 0 means retry indefinitely.
     """
     _apply_thread_cap(num_threads)
     live = is_live_url(source)
+    if live:
+        _apply_ffmpeg_capture_options(source)
 
     # For live streams, looping is meaningless — disable it.
     # For local files, fall back to the configured default if caller didn't specify.
@@ -110,6 +203,39 @@ def process_stream(
     frame_count = 0
     reconnect_count = 0
     reconnect_delay = RECONNECT_DELAY_SECONDS
+    # True once at least one frame has actually been decoded. Until then a
+    # failure is an *initial-connect* failure (bad URL / server down) and is
+    # capped at INITIAL_CONNECT_MAX_ATTEMPTS; after it, drops are transient and
+    # reconnect (subject to MAX_RECONNECT_DURATION_SECONDS).
+    ever_streamed = False
+    disconnect_since = None   # time.time() when the current outage began
+    error_meta = {
+        "drone_id": drone_id,
+        "drone_name": drone_name,
+        "source": source,
+        "zone": zone,
+        "latitude": latitude,
+        "longitude": longitude,
+        "altitude": altitude,
+    }
+
+    def _give_up(msg: str) -> None:
+        print(f"[StreamProcessor] Giving up after {reconnect_count} attempts: {msg}")
+        report_stream_error(msg, **error_meta)
+        try:
+            if cap.isOpened():
+                cap.release()
+        except Exception:
+            pass
+        sys.exit(1)
+
+    def _check_reconnect_deadline() -> None:
+        """After the stream has worked once, stop retrying a source that's been
+        unreachable for MAX_RECONNECT_DURATION_SECONDS — it isn't coming back."""
+        if (ever_streamed and MAX_RECONNECT_DURATION_SECONDS > 0
+                and disconnect_since is not None
+                and time.time() - disconnect_since > MAX_RECONNECT_DURATION_SECONDS):
+            _give_up(f"Stream lost — {diagnose_connection(source)}")
 
     try:
         while True:
@@ -128,8 +254,22 @@ def process_stream(
 
                 # Live stream: schedule a retry
                 reconnect_count += 1
+                if disconnect_since is None:
+                    disconnect_since = time.time()
+
+                # Never streamed a frame yet → this is a bad/unreachable source.
+                # Don't leave an invisible zombie retrying forever: report it to
+                # the backend so the dashboard can show why, then exit.
+                if not ever_streamed and reconnect_count >= INITIAL_CONNECT_MAX_ATTEMPTS:
+                    _give_up(diagnose_connection(source))
+
+                # Streamed before but the source has now been gone too long.
+                _check_reconnect_deadline()
+
                 if max_reconnect_attempts > 0 and reconnect_count > max_reconnect_attempts:
                     print(f"[StreamProcessor] Max reconnect attempts ({max_reconnect_attempts}) reached. Stopping.")
+                    if not ever_streamed:
+                        report_stream_error(diagnose_connection(source), **error_meta)
                     return
 
                 # Exponential backoff, capped at MAX_RECONNECT_DELAY_SECONDS
@@ -140,6 +280,7 @@ def process_stream(
             # Successfully opened — reset reconnect state
             reconnect_count = 0
             reconnect_delay = RECONNECT_DELAY_SECONDS
+            disconnect_since = None
             print(f"[StreamProcessor] Stream opened successfully.")
 
             # ── Frame processing loop ────────────────────────────────────
@@ -151,9 +292,20 @@ def process_stream(
                 if not ret:
                     # ── End-of-stream / network drop ─────────────────────
                     if live:
-                        print("[StreamProcessor] Stream interrupted. Will reconnect…")
                         cap.release()
                         reconnect_count += 1
+                        if disconnect_since is None:
+                            disconnect_since = time.time()
+
+                        # Opened but never delivered a frame → wrong path /
+                        # codec / auth. Same treatment as a refused connect.
+                        if not ever_streamed and reconnect_count >= INITIAL_CONNECT_MAX_ATTEMPTS:
+                            _give_up(diagnose_connection(source))
+
+                        # Streamed before but the source has been gone too long.
+                        _check_reconnect_deadline()
+
+                        print("[StreamProcessor] Stream interrupted. Will reconnect…")
                         if max_reconnect_attempts > 0 and reconnect_count > max_reconnect_attempts:
                             print(f"[StreamProcessor] Max reconnect attempts reached. Stopping.")
                             return
@@ -170,6 +322,7 @@ def process_stream(
                         return
 
                 frame_count += 1
+                ever_streamed = True
 
                 # ── Detect people ────────────────────────────────────────
                 points, headcount = detector.detect_people(frame)

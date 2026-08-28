@@ -52,3 +52,36 @@ def terminate(pid: int | None, timeout: float = 5.0) -> bool:
         return True
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         return False
+
+
+def find_worker_pids(drone_id: str) -> list[int]:
+    """Every live `stream_processor.py --drone-id <drone_id>` process.
+
+    The DB's `pid` column can drift — a worker relaunched out-of-band, a stale
+    row after a crash, or (as actually happened) a feed that dropped and is
+    reconnecting forever while the dashboard already shows it 'idle'. Scanning
+    the process table by the `--drone-id` argument finds them all regardless of
+    what the DB thinks.
+    """
+    matches: list[int] = []
+    for proc in psutil.process_iter(["pid", "cmdline"]):
+        try:
+            cmdline = proc.info.get("cmdline") or []
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+        if not any("stream_processor.py" in str(part) for part in cmdline):
+            continue
+        for i, part in enumerate(cmdline):
+            if part == "--drone-id" and i + 1 < len(cmdline) and cmdline[i + 1] == drone_id:
+                matches.append(proc.info["pid"])
+                break
+    return matches
+
+
+def terminate_by_drone_id(drone_id: str, timeout: float = 5.0) -> list[int]:
+    """Kill every stream_processor.py worker for `drone_id`. Returns killed pids."""
+    killed: list[int] = []
+    for pid in find_worker_pids(drone_id):
+        if terminate(pid, timeout=timeout):
+            killed.append(pid)
+    return killed

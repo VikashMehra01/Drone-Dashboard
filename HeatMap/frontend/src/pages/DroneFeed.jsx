@@ -190,6 +190,21 @@ export default function DroneFeed() {
                                             Your browser does not support the video tag.
                                         </video>
                                     )
+                                ) : drone.status === 'error' ? (
+                                    <div className="feed-video-placeholder" style={{ gap: 8, padding: '24px 16px' }}>
+                                        <Radio size={38} style={{ color: 'var(--color-accent-red)' }} />
+                                        <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--color-text-primary)' }}>
+                                            {drone.name} — Stream Error
+                                        </span>
+                                        <span style={{ fontSize: 11.5, color: 'var(--color-accent-red)', maxWidth: 280, textAlign: 'center' }}>
+                                            {drone.error || 'The drone feed could not be opened.'}
+                                        </span>
+                                        {drone.video_url && (
+                                            <span style={{ fontSize: 11, color: 'var(--color-text-muted)', wordBreak: 'break-all', maxWidth: 280, textAlign: 'center' }}>
+                                                {drone.video_url}
+                                            </span>
+                                        )}
+                                    </div>
                                 ) : (
                                     <div className="feed-video-placeholder">
                                         <Video />

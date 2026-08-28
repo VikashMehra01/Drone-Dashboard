@@ -1,4 +1,6 @@
 from fastapi import APIRouter
+from pydantic import BaseModel
+from typing import Optional
 from app.config import settings
 from app.routers.density import current_density_data, active_streams
 from pathlib import Path
@@ -12,6 +14,39 @@ VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
 # URL schemes that are live network streams (not local file paths)
 _LIVE_SCHEMES = {"rtsp", "rtsps", "rtmp", "rtmps", "http", "https"}
 
+# ── Fatal stream errors reported by stream_processor.py ──────────────────────
+# A CV worker whose source is refused / unreachable / has a bad path reports
+# here and then exits (instead of retrying forever as an invisible zombie).
+# Keyed by drone_id; surfaced on the dashboard as status "error" until it goes
+# stale or the drone comes back online.
+STREAM_ERROR_TTL_SECONDS = 120
+stream_errors: dict[str, dict] = {}
+
+
+class StreamErrorReport(BaseModel):
+    error: str
+    timestamp: Optional[float] = None
+    drone_id: Optional[str] = None
+    drone_name: Optional[str] = None
+    source: Optional[str] = None
+    zone: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    altitude: Optional[float] = None
+
+
+def _prune_stream_errors() -> None:
+    now = time.time()
+    for key in [k for k, v in stream_errors.items()
+                if now - float(v.get("timestamp") or 0) > STREAM_ERROR_TTL_SECONDS]:
+        stream_errors.pop(key, None)
+
+
+def clear_stream_error(drone_id: str | None) -> None:
+    """Drop a drone's error entry — called when it's (re)launched or goes active."""
+    if drone_id:
+        stream_errors.pop(drone_id, None)
+
 
 def _derive_mediamtx_hls_url(source_url: str) -> str | None:
     """
@@ -19,11 +54,14 @@ def _derive_mediamtx_hls_url(source_url: str) -> str | None:
 
     MediaMTX accepts RTSP, RTSPS, RTMP and RTMPS as inputs and re-publishes
     every stream as an HLS playlist on its built-in HTTP server (default port 8888).
-    The stream *path* is the same regardless of the ingest protocol:
+    The stream *path* is the same regardless of the ingest protocol (RTSP
+    defaults to port 554, RTMP to 1935 — the port never appears in the HLS URL):
 
-        rtsp://localhost:8554/mystream   → http://localhost:8888/mystream/index.m3u8
-        rtmp://localhost:1935/live/key   → http://localhost:8888/live/key/index.m3u8
-        rtsps://host:8322/cam1          → http://host:8888/cam1/index.m3u8
+        rtsp://localhost:8554/mystream       → http://localhost:8888/mystream/index.m3u8
+        rtmp://localhost:1935/mystream       → http://localhost:8888/mystream/index.m3u8
+        rtmp://localhost:1935/live/key       → http://localhost:8888/live/key/index.m3u8
+        rtmp://host/live/key?token=abc       → http://host:8888/live/key/index.m3u8
+        rtsps://host:8322/cam1               → http://host:8888/cam1/index.m3u8
 
     Returns None for protocols MediaMTX doesn't ingest (e.g. plain HTTP MJPEG).
     """
@@ -32,7 +70,9 @@ def _derive_mediamtx_hls_url(source_url: str) -> str | None:
         if parsed.scheme.lower() not in ("rtsp", "rtsps", "rtmp", "rtmps"):
             return None
         host = parsed.hostname or "localhost"
-        stream_path = parsed.path.lstrip("/")
+        # Strip leading/trailing slashes; the query string (common on RTMP URLs
+        # for auth tokens / stream keys) is already excluded by urlparse().path.
+        stream_path = parsed.path.strip("/")
         if not stream_path:
             return None
         return f"http://{host}:{settings.MEDIAMTX_HLS_PORT}/{stream_path}/index.m3u8"
@@ -223,6 +263,38 @@ def _build_drones_payload() -> list[dict]:
             "stream_protocol": "file",
         })
 
+    # ── 4. Overlay fatal stream errors ─────────────────────────────────────
+    # A drone that's actually streaming (active) always wins — a stale error
+    # from a previous failed attempt shouldn't mask a working feed.
+    _prune_stream_errors()
+    streaming_ids = {d["id"] for d in drones if d["status"] == "active"}
+    by_id = {d["id"]: d for d in drones}
+    for drone_id, err in stream_errors.items():
+        if drone_id in streaming_ids:
+            continue
+        existing = by_id.get(drone_id)
+        if existing:
+            existing["status"] = "error"
+            existing["error"] = err.get("error")
+            existing["error_at"] = err.get("timestamp")
+        else:
+            drones.append({
+                "id": drone_id,
+                "name": err.get("drone_name") or drone_id,
+                "status": "error",
+                "error": err.get("error"),
+                "error_at": err.get("timestamp"),
+                "latitude": err.get("latitude"),
+                "longitude": err.get("longitude"),
+                "altitude": err.get("altitude"),
+                "battery": None,
+                "peopleCounted": 0,
+                "headcountDensity": 0.0,
+                "zone": err.get("zone") or "Standby",
+                "video_url": err.get("source"),
+                "stream_protocol": "file",
+            })
+
     return drones
 
 
@@ -249,12 +321,12 @@ async def get_drones(include_debug: bool = False):
     drones = _build_drones_payload()
 
     # If not live and not debug, strip out any purely "debug" file-backed drones
-    # but keep saved-config idle drones so Fleet Status always shows them.
+    # but keep saved-config idle drones (and errored ones) so Fleet Status
+    # always shows them.
     if not live_active and not debug_mode:
-        # Only keep drones that came from saved configs (they have real details)
-        drones = [d for d in drones if d.get("status") == "idle"]
+        drones = [d for d in drones if d.get("status") in ("idle", "error")]
     elif not live_active and debug_mode:
-        drones = [{**d, "status": "debug"} for d in drones]
+        drones = [{**d, "status": "debug"} if d.get("status") != "error" else d for d in drones]
 
     return {
         "drones": drones,
@@ -263,6 +335,27 @@ async def get_drones(include_debug: bool = False):
         "live_active": live_active,
         "debug_mode": debug_mode,
     }
+
+
+@router.post("/stream-error")
+async def report_stream_error(report: StreamErrorReport):
+    """Called by stream_processor.py when a source is unreachable / bad and it
+    is about to exit. Records the reason so the dashboard can show why the
+    drone never came online, instead of it silently staying 'idle'."""
+    drone_id = (report.drone_id or "").strip() or f"AUTO-{urlparse(report.source or '').hostname or 'stream'}"
+    stream_errors[drone_id] = {
+        "error": report.error,
+        "timestamp": report.timestamp or time.time(),
+        "drone_id": drone_id,
+        "drone_name": report.drone_name,
+        "source": report.source,
+        "zone": report.zone,
+        "latitude": report.latitude,
+        "longitude": report.longitude,
+        "altitude": report.altitude,
+    }
+    print(f"[drone] stream error for '{drone_id}': {report.error}")
+    return {"status": "recorded", "drone_id": drone_id}
 
 
 @router.get("/videos")

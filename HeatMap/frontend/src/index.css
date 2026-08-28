@@ -723,6 +723,37 @@ a {
   border: 1px solid rgba(239, 68, 68, 0.35);
 }
 
+.drone-status-badge.error {
+  color: var(--color-accent-red);
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+/* ── Errored drone card (stream unreachable) ── */
+.drone-card.errored {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.drone-card-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0 2px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  color: var(--color-accent-red);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.drone-card-error svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
 .drone-card-stats {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
@@ -744,6 +775,102 @@ a {
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+/* ===== Fleet card power toggle (admin only) ===== */
+.drone-power {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+.drone-power-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-muted);
+}
+
+.drone-power-seg {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: 50px;
+  background: var(--color-bg-card);
+  padding: 2px;
+}
+
+.drone-power-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 50px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.drone-power-seg-btn:hover:not(:disabled) {
+  color: var(--color-text-primary);
+}
+
+/* The segment matching the current state is the selected pill; it is disabled
+   (no-op). The other segment stays enabled — clicking it performs the switch. */
+.drone-power-seg-btn:disabled {
+  cursor: default;
+}
+
+.drone-power-seg-btn.on-active {
+  background: rgba(16, 185, 129, 0.14);
+  color: var(--color-accent-green);
+}
+
+.drone-power-seg-btn.on-idle {
+  background: rgba(245, 158, 11, 0.14);
+  color: var(--color-accent-amber);
+}
+
+.drone-power-seg-btn:not(.on-active):not(.on-idle):not(:disabled):hover {
+  background: var(--color-bg-secondary);
+}
+
+.drone-power-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: currentColor;
+  opacity: 0.45;
+}
+
+.drone-power-seg-btn.on-active .drone-power-dot.active,
+.drone-power-seg-btn.on-idle .drone-power-dot.idle {
+  opacity: 1;
+}
+
+.drone-power-error {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--color-accent-red);
+  font-size: 11px;
+  font-weight: 500;
 }
 
 /* ===== Feed Page ===== */
