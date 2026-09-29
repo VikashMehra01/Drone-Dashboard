@@ -17,6 +17,9 @@ import socket
 import sys
 import requests
 import argparse
+import shutil
+import subprocess
+from pathlib import Path
 import torch
 from urllib.parse import urlparse
 from detection import PersonDetector
@@ -125,6 +128,103 @@ def _apply_ffmpeg_capture_options(source: str) -> None:
         print(f"[StreamProcessor] FFmpeg capture options for {scheme}: {opts}")
 
 
+
+
+def _supports_nvenc(ffmpeg: str) -> bool:
+    """Check that the local FFmpeg can actually initialize its NVENC encoder."""
+    try:
+        result = subprocess.run(
+            [ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+             "-i", "color=c=black:s=64x64:r=1", "-frames:v", "1",
+             "-c:v", "h264_nvenc", "-f", "null", "-"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8, check=False,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _probe_video_codec(source: str, ffprobe: str) -> str:
+    command = [ffprobe, "-v", "error"]
+    if urlparse(source).scheme.lower() in {"rtsp", "rtsps"}:
+        command += ["-rtsp_transport", "tcp"]
+    command += ["-select_streams", "v:0", "-show_entries", "stream=codec_name",
+                "-of", "default=noprint_wrappers=1:nokey=1", source]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=12, check=False)
+    codec = result.stdout.strip().splitlines()
+    if result.returncode != 0 or not codec:
+        detail = result.stderr.strip().splitlines()
+        raise RuntimeError(detail[-1] if detail else "ffprobe found no video track")
+    return codec[0].lower()
+
+
+class BrowserHLSRelay:
+    """Write a browser-playable HLS feed, copying H.264 and encoding other codecs."""
+
+    def __init__(self, source: str, output_dir: str):
+        self.source = source
+        self.output_dir = Path(output_dir)
+        self.process = None
+        self.last_start = 0.0
+        ffmpeg = shutil.which("ffmpeg")
+        ffprobe = shutil.which("ffprobe")
+        if not ffmpeg or not ffprobe:
+            raise RuntimeError("ffmpeg and ffprobe must be installed and available on PATH")
+        self.ffmpeg = ffmpeg
+        codec = _probe_video_codec(source, ffprobe)
+        self.copy_video = codec == "h264"
+        self.encoder = "copy" if self.copy_video else ("h264_nvenc" if _supports_nvenc(ffmpeg) else "libx264")
+        print(f"[HLS] Source video codec: {codec}; output mode: "
+              f"{'copy (H.264)' if self.copy_video else f'convert to H.264 with {self.encoder}'}")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        for stale_file in self.output_dir.glob("segment_*.ts"):
+            try:
+                stale_file.unlink()
+            except OSError:
+                pass
+        (self.output_dir / "index.m3u8").unlink(missing_ok=True)
+        self.ensure_running()
+
+    def ensure_running(self) -> None:
+        if self.process is not None and self.process.poll() is None:
+            return
+        if time.time() - self.last_start < 3:
+            return
+        self.last_start = time.time()
+        playlist = self.output_dir / "index.m3u8"
+        segment_pattern = self.output_dir / "segment_%06d.ts"
+        command = [self.ffmpeg, "-hide_banner", "-loglevel", "warning"]
+        if urlparse(self.source).scheme.lower() in {"rtsp", "rtsps"}:
+            command += ["-rtsp_transport", "tcp", "-timeout", "10000000"]
+        command += ["-i", self.source, "-map", "0:v:0", "-an"]
+        if self.copy_video:
+            command += ["-c:v", "copy"]
+        elif self.encoder == "h264_nvenc":
+            command += ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ll",
+                        "-pix_fmt", "yuv420p", "-g", "60"]
+        else:
+            command += ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+                        "-pix_fmt", "yuv420p", "-profile:v", "baseline", "-g", "60",
+                        "-keyint_min", "60", "-sc_threshold", "0"]
+        command += ["-f", "hls", "-hls_time", "2", "-hls_list_size", "6",
+                    "-hls_flags", "delete_segments+omit_endlist+independent_segments",
+                    "-hls_segment_filename", str(segment_pattern), str(playlist)]
+        self.process = subprocess.Popen(
+            command, stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr
+        )
+        print(f"[HLS] Started HLS output at {playlist} (PID {self.process.pid})")
+
+    def close(self) -> None:
+        if self.process is None or self.process.poll() is not None:
+            return
+        self.process.terminate()
+        try:
+            self.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait(timeout=2)
+
+
 def process_stream(
     source: str,
     target_fps: int = 5,
@@ -141,6 +241,7 @@ def process_stream(
     yolo_confidence: float = 0.35,
     max_reconnect_attempts: int = MAX_RECONNECT_ATTEMPTS,
     num_threads: int = DEFAULT_NUM_THREADS,
+    hls_output_dir: str | None = None,
 ):
     """
     Process a video source (local file OR live network stream URL) at a given FPS,
@@ -229,6 +330,15 @@ def process_stream(
             pass
         sys.exit(1)
 
+    hls_relay = None
+    if live and hls_output_dir:
+        try:
+            hls_relay = BrowserHLSRelay(source, hls_output_dir)
+        except Exception as exc:
+            print(f"[HLS] Could not start browser HLS output: {exc}")
+
+    cap = None
+
     def _check_reconnect_deadline() -> None:
         """After the stream has worked once, stop retrying a source that's been
         unreachable for MAX_RECONNECT_DURATION_SECONDS — it isn't coming back."""
@@ -286,6 +396,8 @@ def process_stream(
             # ── Frame processing loop ────────────────────────────────────
             stream_active = True
             while stream_active:
+                if hls_relay is not None:
+                    hls_relay.ensure_running()
                 start_time = time.time()
                 ret, frame = cap.read()
 
@@ -361,7 +473,9 @@ def process_stream(
     except KeyboardInterrupt:
         print("\n[StreamProcessor] Stopped by user.")
     finally:
-        if cap.isOpened():
+        if hls_relay is not None:
+            hls_relay.close()
+        if cap is not None and cap.isOpened():
             cap.release()
         print("[StreamProcessor] Released video capture.")
 
@@ -427,6 +541,8 @@ if __name__ == "__main__":
             "Ignored for local files."
         ),
     )
+    parser.add_argument("--hls-output-dir", type=str, default=None,
+                        help="Optional directory for browser HLS output")
     parser.add_argument(
         "--threads", type=int, default=DEFAULT_NUM_THREADS,
         help=(
@@ -453,4 +569,5 @@ if __name__ == "__main__":
         yolo_confidence=args.yolo_confidence,
         max_reconnect_attempts=args.max_reconnect_attempts,
         num_threads=args.threads,
+        hls_output_dir=args.hls_output_dir,
     )

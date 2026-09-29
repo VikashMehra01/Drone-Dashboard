@@ -24,6 +24,8 @@ export default function HlsPlayer({
 }) {
     const videoRef = useRef(null)
     const hlsRef = useRef(null)
+    const networkRetriesRef = useRef(0)
+    const retryTimerRef = useRef(null)
     const [status, setStatus] = useState('loading') // 'loading' | 'playing' | 'error'
     const [errorMsg, setErrorMsg] = useState('')
 
@@ -33,6 +35,11 @@ export default function HlsPlayer({
 
         setStatus('loading')
         setErrorMsg('')
+        networkRetriesRef.current = 0
+        if (retryTimerRef.current) {
+            clearTimeout(retryTimerRef.current)
+            retryTimerRef.current = null
+        }
 
         // Destroy any existing hls instance before re-initialising
         if (hlsRef.current) {
@@ -53,6 +60,7 @@ export default function HlsPlayer({
             hls.attachMedia(video)
 
             hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                networkRetriesRef.current = 0
                 setStatus('playing')
                 if (autoPlay) {
                     video.play().catch(() => {
@@ -63,10 +71,22 @@ export default function HlsPlayer({
 
             hls.on(Hls.Events.ERROR, (_, data) => {
                 if (data.fatal) {
+                    if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRetriesRef.current < 8) {
+                        networkRetriesRef.current += 1
+                        const attempt = networkRetriesRef.current
+                        const httpStatus = data.response?.code
+                        setStatus('loading')
+                        setErrorMsg(`HLS request failed${httpStatus ? ` (HTTP ${httpStatus})` : ''}; retrying (${attempt}/8)…`)
+                        retryTimerRef.current = setTimeout(() => {
+                            retryTimerRef.current = null
+                            if (hlsRef.current === hls) hls.startLoad()
+                        }, 2000)
+                        return
+                    }
                     setStatus('error')
                     setErrorMsg(
                         data.type === Hls.ErrorTypes.NETWORK_ERROR
-                            ? 'Network error — stream may not be ready yet'
+                            ? `HLS network failure after 8 retries${data.response?.code ? ` (HTTP ${data.response.code})` : ''}: ${data.details}`
                             : `Playback error: ${data.details}`
                     )
                     hls.destroy()
@@ -93,6 +113,10 @@ export default function HlsPlayer({
     useEffect(() => {
         initPlayer()
         return () => {
+            if (retryTimerRef.current) {
+                clearTimeout(retryTimerRef.current)
+                retryTimerRef.current = null
+            }
             if (hlsRef.current) {
                 hlsRef.current.destroy()
                 hlsRef.current = null

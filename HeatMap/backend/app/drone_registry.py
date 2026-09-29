@@ -44,11 +44,23 @@ def terminate(pid: int | None, timeout: float = 5.0) -> bool:
         return False
     try:
         proc = psutil.Process(pid)
+        children = proc.children(recursive=True)
+        for child in children:
+            try:
+                child.terminate()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
         proc.terminate()
+        _, alive_children = psutil.wait_procs(children, timeout=timeout)
         try:
             proc.wait(timeout=timeout)
         except psutil.TimeoutExpired:
             proc.kill()
+        for child in alive_children:
+            try:
+                child.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
         return True
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         return False

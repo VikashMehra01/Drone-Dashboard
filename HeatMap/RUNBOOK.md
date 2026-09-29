@@ -70,13 +70,10 @@ INF [WebRTC] listener opened on :8889
 > **RTSP and RTMP are both enabled by default** (ports 8554 and 1935) — you can
 > publish to either without touching the MediaMTX config.
 >
-> **HLS is also enabled by default.** MediaMTX automatically re-broadcasts every
-> ingested stream — regardless of whether it arrived over RTSP or RTMP — as an
-> HLS playlist at `http://localhost:8888/<stream-name>/index.m3u8`. The SkyWatch
-> dashboard uses this HLS URL to **play the live video directly in the browser**.
-> The backend derives it automatically (`_derive_mediamtx_hls_url` in
-> `app/routers/drone.py`) from any `rtsp://` / `rtsps://` / `rtmp://` / `rtmps://`
-> source, so no extra configuration is needed.
+> MediaMTX can accept the test RTSP/RTMP publisher. The SkyWatch stream worker
+> separately creates the browser HLS output through FFmpeg and serves it from the
+> backend. It copies H.264 video without re-encoding; other video codecs are
+> converted to H.264. Keep both `ffmpeg` and `ffprobe` available on `PATH`.
 
 Leave this terminal open.
 

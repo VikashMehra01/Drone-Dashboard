@@ -16,6 +16,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -24,6 +25,8 @@ from pydantic import BaseModel
 
 from app.db import get_db_cursor
 from app.utils.security import hash_password, verify_password, create_access_token, decode_access_token
+from app.hls import stream_key
+from app.config import settings
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -331,7 +334,7 @@ async def list_models(_admin: dict = Depends(require_admin)):
 
 
 def _build_cmd(python_exe: str, processor, config: dict) -> list:
-    return [
+    cmd = [
         python_exe, str(processor),
         "--source", config["source"],
         "--fps", str(config["fps"]),
@@ -345,6 +348,11 @@ def _build_cmd(python_exe: str, processor, config: dict) -> list:
         "--model", config.get("model", "sdnet"),
         "--device", config.get("device", "cpu"),
     ]
+    from urllib.parse import urlparse
+    if urlparse(config["source"]).scheme.lower() in _load_stream_config().LIVE_URL_SCHEMES:
+        output_dir = Path(settings.HLS_OUTPUT_DIR) / stream_key(config["drone_id"])
+        cmd.extend(["--hls-output-dir", str(output_dir)])
+    return cmd
 
 
 def _spawn(cmd: list, drone_dir, log_path) -> subprocess.Popen:

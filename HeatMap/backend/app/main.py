@@ -30,7 +30,9 @@ app.include_router(auth_router)
 
 
 os.makedirs(settings.MEDIA_VIDEOS_DIR, exist_ok=True)
+os.makedirs(settings.HLS_OUTPUT_DIR, exist_ok=True)
 app.mount("/videos", StaticFiles(directory=settings.MEDIA_VIDEOS_DIR), name="videos")
+app.mount("/hls", StaticFiles(directory=settings.HLS_OUTPUT_DIR), name="hls")
 
 
 @app.on_event("startup")

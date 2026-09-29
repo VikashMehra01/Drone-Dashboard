@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Optional
 from app.config import settings
 from app.routers.density import current_density_data, active_streams
+from app.hls import stream_key
 from pathlib import Path
 import time
 from urllib.parse import urlparse
@@ -48,36 +49,8 @@ def clear_stream_error(drone_id: str | None) -> None:
         stream_errors.pop(drone_id, None)
 
 
-def _derive_mediamtx_hls_url(source_url: str) -> str | None:
-    """
-    Derive the MediaMTX HLS URL from any stream URL that MediaMTX can ingest.
-
-    MediaMTX accepts RTSP, RTSPS, RTMP and RTMPS as inputs and re-publishes
-    every stream as an HLS playlist on its built-in HTTP server (default port 8888).
-    The stream *path* is the same regardless of the ingest protocol (RTSP
-    defaults to port 554, RTMP to 1935 — the port never appears in the HLS URL):
-
-        rtsp://localhost:8554/mystream       → http://localhost:8888/mystream/index.m3u8
-        rtmp://localhost:1935/mystream       → http://localhost:8888/mystream/index.m3u8
-        rtmp://localhost:1935/live/key       → http://localhost:8888/live/key/index.m3u8
-        rtmp://host/live/key?token=abc       → http://host:8888/live/key/index.m3u8
-        rtsps://host:8322/cam1               → http://host:8888/cam1/index.m3u8
-
-    Returns None for protocols MediaMTX doesn't ingest (e.g. plain HTTP MJPEG).
-    """
-    try:
-        parsed = urlparse(source_url)
-        if parsed.scheme.lower() not in ("rtsp", "rtsps", "rtmp", "rtmps"):
-            return None
-        host = parsed.hostname or "localhost"
-        # Strip leading/trailing slashes; the query string (common on RTMP URLs
-        # for auth tokens / stream keys) is already excluded by urlparse().path.
-        stream_path = parsed.path.strip("/")
-        if not stream_path:
-            return None
-        return f"http://{host}:{settings.MEDIAMTX_HLS_PORT}/{stream_path}/index.m3u8"
-    except Exception:
-        return None
+def _hls_url_for_drone(drone_id: str | None) -> str:
+    return f"{settings.HLS_BASE_URL}/hls/{stream_key(drone_id)}/index.m3u8"
 
 
 def _list_video_files() -> list[Path]:
@@ -171,9 +144,9 @@ def _build_url_stream_drones(file_video_names: set[str]) -> list[dict]:
                 # For URL streams the video_url IS the source URL.
                 # The frontend will use this to decide display behaviour.
                 "video_url": source_url,
-                # hls_url: browser-playable HLS playlist derived via MediaMTX.
-                # Set for RTSP, RTSPS, RTMP and RTMPS sources; None otherwise.
-                "hls_url": _derive_mediamtx_hls_url(source_url),
+                # The stream worker creates this HLS playlist, copying H.264
+                # or converting other video codecs to H.264.
+                "hls_url": _hls_url_for_drone(drone_id),
                 # Expose the raw protocol so the UI can choose the right player
                 "stream_protocol": scheme,
             }
